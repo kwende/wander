@@ -224,7 +224,18 @@ button:hover { border-color: var(--accent); }
 .work-item[data-status="blocked"] { border-color: rgba(244, 127, 136, 0.35); background: rgba(244, 127, 136, 0.08); }
 .work-item[data-status="complete"], .work-item[data-status="abandoned"] { opacity: 0.58; }
 .work-marker { color: var(--muted); font-weight: 800; }
-.work-item[data-status="active"] .work-marker { color: var(--accent); }
+.work-item[data-status="active"] .work-marker {
+  align-self: start;
+  justify-self: center;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-top: 0.32rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: transparent;
+  box-shadow: 0 0 0 rgba(102, 227, 188, 0.65);
+  animation: pulse 1.8s infinite;
+}
 .work-item[data-status="blocked"] .work-marker { color: var(--danger); }
 .work-item[data-status="complete"] .work-marker { color: var(--complete); }
 .work-title { margin-bottom: 0.25rem; font-weight: 650; }
@@ -270,6 +281,6 @@ button:hover { border-color: var(--accent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pulse { animation: none; }
+  .pulse, .work-item[data-status="active"] .work-marker { animation: none; }
 }
 
