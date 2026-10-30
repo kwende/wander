@@ -63,6 +63,18 @@ class WanderStore:
     def writer_thread_link(self) -> str:
         return f"codex://threads/{self.writer_thread_id}" if self.writer_thread_id else ""
 
+    def identify_writer_thread(self, deep_link: str) -> dict[str, str]:
+        deep_link = deep_link.strip()
+        if not THREAD_LINK_PATTERN.fullmatch(deep_link):
+            raise ValidationError("deep_link must have the form codex://threads/<thread-id>")
+        thread_id = deep_link.removeprefix("codex://threads/")
+        if self.writer_thread_id and self.writer_thread_id.casefold() != thread_id.casefold():
+            raise OwnershipError(
+                "This Wander MCP session is already bound to a different Codex thread"
+            )
+        self.writer_thread_id = thread_id
+        return {"thread_link": self.writer_thread_link, "status": "identified"}
+
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.database_path, timeout=10)

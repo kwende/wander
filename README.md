@@ -33,8 +33,10 @@ Copy-Item -Recurse -Force .\skills\wander "$env:USERPROFILE\.codex\skills\wander
 
 Restart Codex after changing MCP or skill registrations. A conversation can
 then say `Make a Wander out of our task`; the skill discovers or creates the
-project, attaches the host-provided conversation identity, and builds the
-high-level work-item sequence.
+project, binds the MCP session to the host-provided conversation identity, and
+builds the high-level work-item sequence. The identity is passed explicitly
+because a globally launched MCP process does not necessarily inherit the
+calling thread's environment.
 
 The repository is also a local Agent Plugin package. Its manifest is
 `plugin.json`, its MCP declaration is `mcp.json`, and its packaged skill is in

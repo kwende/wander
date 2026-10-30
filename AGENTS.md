@@ -18,6 +18,9 @@ boundaries:
 - Prefer `attach_current_thread` when the host exposes `CODEX_THREAD_ID` or
   `CODEX_SESSION_ID`; ask for a copied deep link and use `attach_thread` only
   when host identity is unavailable.
+- A globally registered MCP process may not inherit per-thread environment
+  values. Bind its session once with `identify_thread`; never switch that
+  identity within the same server process.
 
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint

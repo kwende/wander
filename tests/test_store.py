@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wander.store import ConflictError, ValidationError, WanderStore
+from wander.store import ConflictError, OwnershipError, ValidationError, WanderStore
 
 
 class WanderStoreTests(unittest.TestCase):
@@ -91,6 +91,43 @@ class WanderStoreTests(unittest.TestCase):
                 "https://example.test/thread",
                 "Wrong link",
                 "primary",
+            )
+
+    def test_unidentified_server_can_bind_once_and_create_project(self) -> None:
+        unidentified = WanderStore(
+            Path(self.temporary_directory.name) / "unidentified.db"
+        )
+
+        identity = unidentified.identify_writer_thread(
+            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
+        )
+        project = unidentified.create_project(
+            "vc-runtime-cleanup",
+            "VC Runtime Cleanup",
+            "Align the native toolchain and packaged runtime.",
+        )
+
+        self.assertEqual("identified", identity["status"])
+        self.assertEqual(
+            "01a0abd2-f583-78a0-b1f5-c14899ee9c67",
+            project["owner_thread_id"],
+        )
+        self.assertEqual(
+            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
+            project["recent_events"][0]["source_thread"],
+        )
+
+    def test_mcp_session_cannot_switch_thread_identity(self) -> None:
+        unidentified = WanderStore(
+            Path(self.temporary_directory.name) / "identity-switch.db"
+        )
+        unidentified.identify_writer_thread(
+            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
+        )
+
+        with self.assertRaises(OwnershipError):
+            unidentified.identify_writer_thread(
+                "codex://threads/01a18d56-4e60-7050-a88d-c64cc83d5bae"
             )
 
     def test_completed_project_cannot_be_reactivated(self) -> None:

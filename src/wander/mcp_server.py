@@ -36,9 +36,10 @@ def current_thread_id() -> str | None:
 store = WanderStore(default_database_path(), current_thread_id())
 mcp = MCPServer(
     "wander",
-    version="0.1.0",
+    version="0.1.1",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
+        "Identify the current Codex thread before the first mutation. "
         "Pass the last-read project version to every mutation. Record evidence before completion. "
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
     ),
@@ -61,6 +62,12 @@ def get_project(project: str) -> dict[str, Any]:
 def get_resume_context(project: str) -> dict[str, Any]:
     """Get compact state needed to resume a project without reanalyzing its entire history."""
     return store.get_resume_context(project)
+
+
+@mcp.tool()
+def identify_thread(deep_link: str) -> dict[str, str]:
+    """Bind this MCP session to one supported codex://threads/<thread-id> identity."""
+    return store.identify_writer_thread(deep_link)
 
 
 @mcp.tool()
