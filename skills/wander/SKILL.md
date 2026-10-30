@@ -1,6 +1,6 @@
 ---
 name: wander
-description: Create or maintain a durable Wander workboard when the user says "make a Wander," asks to track a task in Wander, or wants a high-level visual checklist that survives across turns. Do not activate for ordinary one-off tasks unless the user explicitly asks for Wander.
+description: Create or maintain a durable Wander workboard when the user says "make a Wander," asks to track a task in Wander, wants a high-level visual checklist that survives across turns, or supplies a Wander Codex link containing project and item query parameters. Do not activate for ordinary one-off tasks unless the user explicitly asks for Wander.
 ---
 
 # Wander
