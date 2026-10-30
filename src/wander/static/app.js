@@ -15,7 +15,7 @@ const markers = {
   active: "●",
   blocked: "!",
   complete: "✓",
-  abandoned: "—",
+  abandoned: "×",
 };
 
 function formatDate(value) {

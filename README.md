@@ -30,6 +30,10 @@ On a localhost, non-shared dashboard, each visible work item also exposes a
 Codex chat resolves through Wander MCP. The control is hidden from shared and
 LAN viewers; this is an authoring convenience, not an authentication boundary.
 
+Work explicitly removed from the plan uses the existing `abandoned` state. The
+dashboard renders it with a yellow × to distinguish “decided not to do” from a
+red blocked or failed-looking condition.
+
 The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
 setting up the environment so the repository MCP registry is rediscovered.
 
