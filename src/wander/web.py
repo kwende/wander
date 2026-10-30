@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +23,7 @@ CONTENT_TYPES = {
 
 class DashboardHandler(BaseHTTPRequestHandler):
     store: WanderStore
+    share_base_url: str
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.address_string()} - {format % args}")
@@ -62,7 +64,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         try:
             if path == "/api/health":
-                self._send_json(HTTPStatus.OK, {"status": "ok", "mode": "read-only"})
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "mode": "read-only",
+                        "share_base_url": self.share_base_url,
+                    },
+                )
                 return
             if path == "/api/projects":
                 self._send_json(HTTPStatus.OK, self.store.list_projects())
@@ -95,9 +104,56 @@ class DashboardHandler(BaseHTTPRequestHandler):
         )
 
 
-def create_server(host: str, port: int, store: WanderStore) -> ThreadingHTTPServer:
+def detect_lan_address() -> str:
+    try:
+        _, _, addresses = socket.gethostbyname_ex(socket.gethostname())
+        for address in addresses:
+            if address and not address.startswith(("127.", "169.254.")):
+                return address
+    except OSError:
+        pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as candidate:
+            candidate.connect(("8.8.8.8", 80))
+            address = candidate.getsockname()[0]
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
+    return "127.0.0.1"
+
+
+def normalize_share_base_url(value: str) -> str:
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValidationError(
+            "Share base URL must be an absolute http(s) origin without credentials, path, query, or fragment"
+        )
+    return value.rstrip("/")
+
+
+def create_server(
+    host: str,
+    port: int,
+    store: WanderStore,
+    share_base_url: str | None = None,
+) -> ThreadingHTTPServer:
     handler = type("ConfiguredDashboardHandler", (DashboardHandler,), {"store": store})
-    return ThreadingHTTPServer((host, port), handler)
+    server = ThreadingHTTPServer((host, port), handler)
+    advertised_host = detect_lan_address() if host in {"0.0.0.0", "::"} else host
+    handler.share_base_url = normalize_share_base_url(
+        share_base_url or f"http://{advertised_host}:{server.server_port}"
+    )
+    return server
 
 
 def default_database_path() -> Path:
@@ -112,9 +168,20 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--database", type=Path, default=default_database_path())
+    parser.add_argument(
+        "--share-base-url",
+        default=os.environ.get("WANDER_SHARE_BASE_URL"),
+        help="Absolute network-reachable origin advertised by the Share action",
+    )
     arguments = parser.parse_args()
-    server = create_server(arguments.host, arguments.port, WanderStore(arguments.database))
+    server = create_server(
+        arguments.host,
+        arguments.port,
+        WanderStore(arguments.database),
+        arguments.share_base_url,
+    )
     print(f"Wander dashboard: http://{arguments.host}:{server.server_port}")
+    print(f"Wander share URL: {server.RequestHandlerClass.share_base_url}")
     print("The HTTP surface is read-only; writes are available only through MCP.")
     try:
         server.serve_forever()

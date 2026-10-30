@@ -18,6 +18,17 @@ machine on the same reachable network. Windows Firewall may require an inbound
 rule. Anyone who can reach the port can read the project notes; no HTTP write
 surface exists.
 
+The server advertises its preferred LAN IPv4 address to the Share action, so a
+link copied from `localhost` remains reachable from another machine. On a VPN or
+multi-NIC host, override auto-detection explicitly:
+
+```powershell
+& .\scripts\start-web.ps1 -ShareBaseUrl 'http://172.17.5.65:8765'
+```
+
+`WANDER_SHARE_BASE_URL` provides the same override for unattended startup. This
+is a LAN-reachable address, not discovery of an Internet/NAT public address.
+
 Each project can expose ordered HTTP links beneath its description. Active or
 blocked parent work items expand into a read-only child checklist so the current
 acceptance criteria are visible; completed parents collapse that detail. A

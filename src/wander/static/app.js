@@ -9,6 +9,7 @@ const requestedItem = query.get("item");
 const sharedProject = query.get("shared") === "1" ? query.get("project") : null;
 const localAuthoringHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const isLocalAuthoringView = !sharedProject && localAuthoringHosts.has(window.location.hostname);
+let shareBaseUrl = window.location.origin;
 
 const markers = {
   pending: "○",
@@ -31,7 +32,7 @@ function text(root, selector, value) {
 }
 
 function buildShareUrl(project) {
-  const url = new URL(window.location.href);
+  const url = new URL(shareBaseUrl);
   url.search = "";
   url.searchParams.set("project", project.slug);
   url.searchParams.set("shared", "1");
@@ -259,19 +260,33 @@ async function loadProject(slug) {
   }
 }
 
+async function loadConfiguration() {
+  try {
+    const health = await fetchJson("/api/health");
+    if (health.share_base_url) shareBaseUrl = health.share_base_url;
+  } catch {
+    shareBaseUrl = window.location.origin;
+  }
+}
+
 select.addEventListener("change", () => loadProject(select.value));
 refreshButton.addEventListener("click", () => {
   if (sharedProject) loadProject(sharedProject);
   else loadProjects(select.value);
 });
 
-if (sharedProject) {
-  select.hidden = true;
-  selectLabel.hidden = true;
-  setInterval(() => loadProject(sharedProject), 15000);
-  loadProject(sharedProject);
-} else {
-  setInterval(() => loadProjects(select.value), 15000);
-  loadProjects(requestedProject);
+async function initialize() {
+  await loadConfiguration();
+  if (sharedProject) {
+    select.hidden = true;
+    selectLabel.hidden = true;
+    setInterval(() => loadProject(sharedProject), 15000);
+    loadProject(sharedProject);
+  } else {
+    setInterval(() => loadProjects(select.value), 15000);
+    loadProjects(requestedProject);
+  }
 }
+
+initialize();
 

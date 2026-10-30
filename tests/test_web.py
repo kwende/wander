@@ -20,7 +20,12 @@ class ReadOnlyDashboardTests(unittest.TestCase):
             "test-thread",
         )
         self.store.create_project("wander", "Wander", "Keep durable project state.")
-        self.server = create_server("127.0.0.1", 0, self.store)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            self.store,
+            "http://10.20.30.40:8765",
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
@@ -43,6 +48,12 @@ class ReadOnlyDashboardTests(unittest.TestCase):
             result = json.load(response)
         self.assertEqual("Wander", result["title"])
         self.assertEqual("Issue", result["links"][0]["label"])
+
+    def test_health_advertises_network_share_base_url(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/health") as response:
+            result = json.load(response)
+        self.assertEqual("read-only", result["mode"])
+        self.assertEqual("http://10.20.30.40:8765", result["share_base_url"])
 
     def test_initial_page_includes_wander_tagline(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/") as response:

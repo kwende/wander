@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$HostAddress = '0.0.0.0',
-    [int]$Port = 8765
+    [int]$Port = 8765,
+    [string]$ShareBaseUrl = $env:WANDER_SHARE_BASE_URL
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +14,10 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 $database = Join-Path $repoRoot 'data\wander.db'
-& $python -m wander.web --host $HostAddress --port $Port --database $database
+$arguments = @('-m', 'wander.web', '--host', $HostAddress, '--port', $Port, '--database', $database)
+if ($ShareBaseUrl) {
+    $arguments += @('--share-base-url', $ShareBaseUrl)
+}
+& $python @arguments
 exit $LASTEXITCODE
 
