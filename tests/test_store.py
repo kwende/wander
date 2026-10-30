@@ -63,6 +63,60 @@ class WanderStoreTests(unittest.TestCase):
         self.assertEqual("complete", project["work_items"][0]["status"])
         self.assertEqual(4, project["version"])
 
+    def test_parent_cannot_complete_before_child_items(self) -> None:
+        project = self.store.add_work_item(
+            "camera-reboot",
+            self.project["version"],
+            "Implement recovery",
+        )
+        parent_id = project["work_items"][0]["id"]
+        project = self.store.add_work_item(
+            "camera-reboot",
+            project["version"],
+            "Validate recovery",
+            parent_id=parent_id,
+        )
+        child_id = next(item for item in project["work_items"] if item["parent_id"])["id"]
+        project = self.store.start_work_item(
+            "camera-reboot",
+            parent_id,
+            project["version"],
+            "Implementing recovery",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.complete_work_item(
+                "camera-reboot",
+                parent_id,
+                project["version"],
+                "Parent evidence",
+                "Parent complete",
+            )
+
+        project = self.store.start_work_item(
+            "camera-reboot",
+            child_id,
+            project["version"],
+            "Validating recovery",
+        )
+        project = self.store.complete_work_item(
+            "camera-reboot",
+            child_id,
+            project["version"],
+            "Child evidence",
+            "Child complete",
+        )
+        project = self.store.complete_work_item(
+            "camera-reboot",
+            parent_id,
+            project["version"],
+            "Parent evidence",
+            "Parent complete",
+        )
+
+        parent = next(item for item in project["work_items"] if item["id"] == parent_id)
+        self.assertEqual("complete", parent["status"])
+
     def test_completion_atomically_attaches_commit_links(self) -> None:
         project = self.store.add_work_item(
             "camera-reboot",

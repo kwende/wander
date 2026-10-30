@@ -79,22 +79,39 @@ function renderProject(project) {
   const shareLink = fragment.querySelector("[data-action='share']");
   const shareUrl = buildShareUrl(project);
   shareLink.href = shareUrl;
+  shareLink.hidden = Boolean(sharedProject);
   shareLink.addEventListener("click", (event) => {
     event.preventDefault();
     copyShareUrl(shareLink, shareUrl);
   });
 
-  const relevantItems = project.work_items.filter((item) => item.status !== "abandoned");
+  const projectLinks = project.links || [];
+  const projectLinksSection = fragment.querySelector("[data-section='project-links']");
+  const projectLinksList = fragment.querySelector("[data-list='project-links']");
+  if (projectLinks.length) {
+    projectLinksSection.hidden = false;
+    for (const link of projectLinks) {
+      const anchor = document.createElement("a");
+      anchor.href = link.url;
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.textContent = link.label;
+      projectLinksList.appendChild(anchor);
+    }
+  }
+
+  const topLevelItems = project.work_items.filter((item) => !item.parent_id);
+  const relevantItems = topLevelItems.filter((item) => item.status !== "abandoned");
   const completed = relevantItems.filter((item) => item.status === "complete").length;
   const progress = relevantItems.length ? Math.round((completed / relevantItems.length) * 100) : 0;
   text(fragment, "[data-field='progress']", `${completed}/${relevantItems.length} complete`);
   fragment.querySelector("[data-field='progress-bar']").style.width = `${progress}%`;
 
   const workList = fragment.querySelector("[data-list='work-items']");
-  if (!project.work_items.length) {
+  if (!topLevelItems.length) {
     workList.innerHTML = '<li class="work-notes">No work items have been added.</li>';
   } else {
-    for (const item of project.work_items) {
+    for (const item of topLevelItems) {
       const element = document.createElement("li");
       element.className = "work-item";
       element.dataset.status = item.status;
@@ -107,6 +124,43 @@ function renderProject(project) {
         </div>`;
       element.querySelector(".work-title").textContent = item.title;
       element.querySelector(".work-notes").textContent = detail;
+
+      const children = project.work_items.filter(
+        (candidate) => candidate.parent_id === item.id && candidate.status !== "abandoned",
+      );
+      if (["active", "blocked"].includes(item.status) && children.length) {
+        const checklist = document.createElement("ul");
+        checklist.className = "subtask-list";
+        for (const child of children) {
+          const checklistItem = document.createElement("li");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.disabled = true;
+          checkbox.checked = child.status === "complete";
+          const label = document.createElement("span");
+          label.textContent = child.title;
+          checklistItem.append(checkbox, label);
+          checklist.appendChild(checklistItem);
+        }
+        element.querySelector("div").appendChild(checklist);
+      }
+
+      if (item.links?.length) {
+        const commitLinks = document.createElement("div");
+        commitLinks.className = "commit-links";
+        const commitLabel = document.createElement("span");
+        commitLabel.textContent = "Commits:";
+        commitLinks.appendChild(commitLabel);
+        for (const link of item.links) {
+          const anchor = document.createElement("a");
+          anchor.href = link.url;
+          anchor.target = "_blank";
+          anchor.rel = "noreferrer";
+          anchor.textContent = link.label;
+          commitLinks.appendChild(anchor);
+        }
+        element.querySelector("div").appendChild(commitLinks);
+      }
       workList.appendChild(element);
     }
   }

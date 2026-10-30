@@ -662,6 +662,20 @@ class WanderStore:
                 )
             if target_status == "complete" and not evidence.strip():
                 raise ValidationError("completion evidence is required")
+            if target_status == "complete":
+                incomplete_children = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM work_items
+                    WHERE parent_id = ?
+                      AND status NOT IN ('complete', 'abandoned')
+                    """,
+                    (item_id,),
+                ).fetchone()[0]
+                if incomplete_children:
+                    raise ValidationError(
+                        "all child work items must be complete or abandoned before the parent"
+                    )
             next_notes = item["notes"] if notes is None else notes.strip()
             next_link_sequence = connection.execute(
                 """

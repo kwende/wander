@@ -145,6 +145,19 @@ button:hover { border-color: var(--accent); }
 
 .objective > [data-field="objective"] { display: block; }
 
+.project-links {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.7rem;
+  max-width: 65rem;
+  margin-top: 1rem;
+}
+
+.project-links > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.link-list, .commit-links { display: flex; flex-wrap: wrap; gap: 0.45rem 0.75rem; }
+.link-list a, .commit-links a { color: var(--accent); text-decoration: none; }
+.link-list a:hover, .commit-links a:hover { text-decoration: underline; }
+
 .status-line {
   display: flex;
   align-items: center;
@@ -216,6 +229,28 @@ button:hover { border-color: var(--accent); }
 .work-item[data-status="complete"] .work-marker { color: var(--complete); }
 .work-title { margin-bottom: 0.25rem; font-weight: 650; }
 .work-notes { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
+
+.subtask-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subtask-list li { display: flex; align-items: center; gap: 0.55rem; color: var(--text); font-size: 0.82rem; }
+.subtask-list input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+
+.commit-links {
+  align-items: center;
+  margin-top: 0.8rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.commit-links > span { margin-right: 0.1rem; font-weight: 600; }
 
 .event-list { display: grid; gap: 0.55rem; }
 .activity-panel { margin-top: 1rem; }

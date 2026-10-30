@@ -18,6 +18,13 @@ machine on the same reachable network. Windows Firewall may require an inbound
 rule. Anyone who can reach the port can read the project notes; no HTTP write
 surface exists.
 
+Each project can expose ordered HTTP links beneath its description. Active or
+blocked parent work items expand into a read-only child checklist so the current
+acceptance criteria are visible; completed parents collapse that detail. A
+completed item can also retain verified GitHub commit links as code provenance.
+The shared-project URL (`?project=<slug>&shared=1`) hides project selection and
+the Share control while preserving the project links and work state.
+
 The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
 setting up the environment so the repository MCP registry is rediscovered.
 
@@ -67,7 +74,8 @@ Every mutation:
 4. Adds an append-only provenance event.
 
 A stale chat receives a conflict instead of overwriting newer work. Work-item
-and project completion require evidence.
+and project completion require evidence. A parent work item cannot complete
+until each child is complete or abandoned.
 
 Projects may designate one Codex thread as their center. A different thread can
 still write, but every read or mutation result includes a prominent

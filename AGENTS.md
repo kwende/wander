@@ -9,6 +9,9 @@ boundaries:
 - Every mutation requires `expected_version`, advances the project version, and
   appends a provenance event in the same transaction.
 - Completion requires concrete evidence.
+- A parent work item cannot complete while any child is pending, active, or
+  blocked. Active and blocked parents expose their children as the dashboard's
+  visible acceptance checklist; completed parents collapse that detail.
 - When code implements a completed item, preserve verified GitHub commit links
   as structured work-item provenance; absence of code is not a completion
   failure.
