@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
+from wander.github_projection import (
+    PROJECTION_LINK_LABEL,
+    GitHubProjectionError,
+    build_github_issue_projection,
+    parse_github_issue_comment_url,
+)
+
 
 PROJECT_STATUSES = {"active", "paused", "completed", "archived"}
 PROJECT_TRANSITIONS = {
@@ -574,6 +581,47 @@ class WanderStore:
             )
             connection.commit()
         return self.get_project(project)
+
+    def prepare_github_issue_projection(
+        self,
+        project: str,
+        workboard_url: str = "",
+    ) -> dict[str, Any]:
+        try:
+            return build_github_issue_projection(self.get_project(project), workboard_url)
+        except GitHubProjectionError as error:
+            raise ValidationError(str(error)) from error
+
+    def register_github_projection_comment(
+        self,
+        project: str,
+        expected_version: int,
+        comment_url: str,
+    ) -> dict[str, Any]:
+        comment = parse_github_issue_comment_url(comment_url)
+        if comment is None:
+            raise ValidationError(
+                "comment_url must have the form "
+                "https://github.com/<owner>/<repository>/issues/<number>#issuecomment-<id>"
+            )
+        projection = self.prepare_github_issue_projection(project)
+        issue = projection["issue"]
+        if projection["comment"] is not None:
+            raise ConflictError("project already has a Wander projection comment")
+        if (
+            comment["owner"].casefold() != issue["owner"].casefold()
+            or comment["repo"].casefold() != issue["repo"].casefold()
+            or comment["number"] != issue["number"]
+        ):
+            raise ValidationError(
+                "projection comment must belong to the configured GitHub issue"
+            )
+        return self.add_project_link(
+            project,
+            expected_version,
+            PROJECTION_LINK_LABEL,
+            comment_url,
+        )
 
     def add_work_item(
         self,

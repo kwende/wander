@@ -36,7 +36,7 @@ def current_thread_id() -> str | None:
 store = WanderStore(default_database_path(), current_thread_id())
 mcp = MCPServer(
     "wander",
-    version="0.5.0",
+    version="0.6.0",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
         "Identify the current Codex thread before the first mutation. "
@@ -109,6 +109,29 @@ def remove_project_link(
 ) -> dict[str, Any]:
     """Remove an obsolete project reference while preserving the reason in history."""
     return store.remove_project_link(project, link_id, expected_version, reason)
+
+
+@mcp.tool()
+def prepare_github_issue_projection(
+    project: str,
+    workboard_url: str = "",
+) -> dict[str, Any]:
+    """Render the authoritative one-way GitHub issue-comment projection plan."""
+    return store.prepare_github_issue_projection(project, workboard_url)
+
+
+@mcp.tool()
+def register_github_projection_comment(
+    project: str,
+    expected_version: int,
+    comment_url: str,
+) -> dict[str, Any]:
+    """Record the one GitHub issue comment owned by this Wander project."""
+    return store.register_github_projection_comment(
+        project,
+        expected_version,
+        comment_url,
+    )
 
 
 @mcp.tool()

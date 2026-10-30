@@ -58,6 +58,22 @@ Python, MCP entry point, and skill destination without changing the machine.
 - When code implements a completed item, preserve verified GitHub commit links
   as structured work-item provenance; absence of code is not a completion
   failure.
+- GitHub issue integration is a one-way projection. SQLite remains authoritative;
+  GitHub checkbox state, comment edits, and comment deletion must never mutate
+  Wander. The issue title/body and unrelated comments remain human-owned. One
+  registered conversation comment is replaced wholesale after meaningful
+  Wander batches through the configured GitHub MCP.
+- `prepare_github_issue_projection` is read-only. Creating the first projection
+  comment is followed by `register_github_projection_comment`, which stores the
+  stable `#issuecomment-...` URL as a versioned project link. Regenerate the
+  comment afterward because registration advances the Wander project version.
+- If the registered GitHub comment is missing or an update fails, leave Wander
+  unchanged, report the projection as stale, and do not create a duplicate
+  comment automatically.
+- Before first-comment creation, search comments for the exact stable project
+  marker. Reuse one match to recover an interrupted registration, create only
+  when there are zero matches, and stop on multiple matches. Marker discovery
+  recovers identity only and never imports GitHub content into Wander.
 - Treat `owner_thread_id` as a soft workflow bumper, not authorization. A
   non-owner write succeeds and returns `writer_warning`; surface that warning
   prominently instead of hiding it or describing the write as forbidden.
@@ -77,5 +93,6 @@ Python, MCP entry point, and skill destination without changing the machine.
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint
 containing the current model, last decision, invariants, open questions, and
-best resume point.
+best resume point. If the project has exactly one linked GitHub issue, refresh
+its registered Wander projection comment after the batch.
 

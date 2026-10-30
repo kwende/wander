@@ -73,6 +73,43 @@ may differ), treat it as an identity pointer rather than sufficient context:
 - Keep the dashboard concise. Put causal detail, invariants, open questions,
   and the best resume point in the checkpoint rather than work-item titles.
 
+## Project progress into GitHub issues
+
+Wander is always the source of truth. GitHub issue checkboxes are a one-way
+display projection and must never be read, interpreted, or imported as Wander
+state. A human checking, unchecking, renaming, or deleting projected Markdown
+does not authorize any Wander mutation.
+
+After a meaningful semantic batch, synchronize a project only when it contains
+exactly one `https://github.com/<owner>/<repo>/issues/<number>` project link:
+
+1. Call `prepare_github_issue_projection`. It returns the target issue, stable
+   marker, exact Markdown comment body, project version, and either `create` or
+   `update`.
+2. Use the configured GitHub MCP for the target repository. Do not silently
+   substitute `gh`; use a fallback only when the user authorizes it.
+3. For `create`, first read all issue conversation comments and match only the
+   exact stable marker returned by the plan. One matching comment is an
+   interrupted first synchronization: register and reuse its URL. Zero matches
+   means call GitHub `add_issue_comment`. More than one match is a conflict;
+   stop rather than guessing. Capture the resulting `#issuecomment-<id>` URL,
+   then call `register_github_projection_comment` with the version from the
+   projection plan. Registration advances the Wander version, so call
+   `prepare_github_issue_projection` again and update the registered comment
+   with the regenerated body.
+4. For `update`, update only the registered conversation comment identified by
+   the projection plan. Replace its entire body; do not merge GitHub edits.
+5. Read the comment back and verify its stable marker and final Wander version.
+
+Never edit the issue title or body. Never touch unrelated comments. Never
+create a second projection comment when a registered comment cannot be found;
+report the stale or missing projection and require an explicit recovery
+decision. A GitHub failure does not roll back valid Wander state. Report that
+the projection is stale and retry after the next meaningful Wander batch.
+Reading a marker or registered comment ID is identity recovery only; GitHub
+comment content, checkbox state, and wording remain prohibited inputs to
+Wander.
+
 Wander supplements the repository and chat; it does not authorize unrelated
 source changes, deployment, publication, or other external side effects.
 

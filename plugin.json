@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "wander-workboard",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Keep a durable, visual workboard synchronized with ongoing Codex tasks.",
   "repository": "https://github.com/kwende/wander",
   "keywords": ["planning", "checklist", "projects", "codex"],

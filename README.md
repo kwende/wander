@@ -36,6 +36,19 @@ completed item can also retain verified GitHub commit links as code provenance.
 The shared-project URL (`?project=<slug>&shared=1`) hides project selection and
 the Share control while preserving the project links and work state.
 
+When a project contains exactly one GitHub issue link, Codex can project its
+current phase and work-item checklist into one dedicated issue comment. The
+issue body and unrelated discussion remain untouched. The comment is updated
+in place through the configured GitHub MCP after meaningful Wander batches.
+This is intentionally one-way: SQLite is always authoritative, and GitHub
+checkbox changes are display-only and are never imported into Wander.
+
+The first synchronization creates the comment and records its stable
+`#issuecomment-...` URL as a project link. Later synchronizations replace that
+same comment. If the registered comment disappears or GitHub is unavailable,
+Wander remains current and the projection is reported stale; Wander does not
+create duplicate comments automatically.
+
 On a localhost, non-shared dashboard, each visible work item also exposes a
 `Codex link`. It copies a stable project-and-item identity URL that another
 Codex chat resolves through Wander MCP. The control is hidden from shared and
@@ -99,6 +112,17 @@ Every mutation:
 A stale chat receives a conflict instead of overwriting newer work. Work-item
 and project completion require evidence. A parent work item cannot complete
 until each child is complete or abandoned.
+
+GitHub projection follows a separate eventual-consistency boundary:
+
+```text
+SQLite --prepare_github_issue_projection--> Markdown comment --GitHub MCP--> issue
+GitHub --------------------------------------------------------------X--> SQLite
+```
+
+`prepare_github_issue_projection` is read-only. Registering the initially
+created comment is a normal versioned Wander mutation, after which the comment
+must be regenerated at the new project version.
 
 Projects may designate one Codex thread as their center. A different thread can
 still write, but every read or mutation result includes a prominent
