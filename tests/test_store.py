@@ -63,6 +63,105 @@ class WanderStoreTests(unittest.TestCase):
         self.assertEqual("complete", project["work_items"][0]["status"])
         self.assertEqual(4, project["version"])
 
+    def test_completion_atomically_attaches_commit_links(self) -> None:
+        project = self.store.add_work_item(
+            "camera-reboot",
+            self.project["version"],
+            "Implement recovery",
+        )
+        item_id = project["work_items"][0]["id"]
+        project = self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "Implementing recovery",
+        )
+
+        project = self.store.complete_work_item(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "Recovery tests pass.",
+            "Recovery implemented",
+            [
+                "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
+                "https://github.com/Ocuvera/Ocuvera/commit/89abcdef0123456789abcdef0123456789abcdef",
+            ],
+        )
+
+        item = project["work_items"][0]
+        self.assertEqual("complete", item["status"])
+        self.assertEqual(["0123456789ab", "89abcdef0123"], [link["label"] for link in item["links"]])
+        self.assertEqual(4, project["version"])
+
+    def test_invalid_commit_link_leaves_item_active(self) -> None:
+        project = self.store.add_work_item(
+            "camera-reboot",
+            self.project["version"],
+            "Implement recovery",
+        )
+        item_id = project["work_items"][0]["id"]
+        project = self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "Implementing recovery",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.complete_work_item(
+                "camera-reboot",
+                item_id,
+                project["version"],
+                "Recovery tests pass.",
+                "Recovery implemented",
+                ["https://example.test/not-a-github-commit"],
+            )
+
+        unchanged = self.store.get_project("camera-reboot")
+        self.assertEqual("active", unchanged["work_items"][0]["status"])
+        self.assertEqual([], unchanged["work_items"][0]["links"])
+        self.assertEqual(project["version"], unchanged["version"])
+
+    def test_commit_link_can_be_attached_after_completion(self) -> None:
+        project = self.store.add_work_item(
+            "camera-reboot",
+            self.project["version"],
+            "Document recovery",
+        )
+        item_id = project["work_items"][0]["id"]
+
+        with self.assertRaises(ValidationError):
+            self.store.add_work_item_link(
+                "camera-reboot",
+                item_id,
+                project["version"],
+                "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
+            )
+
+        project = self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "Writing documentation",
+        )
+        project = self.store.complete_work_item(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "Documentation reviewed.",
+            "Documentation complete",
+        )
+        project = self.store.add_work_item_link(
+            "camera-reboot",
+            item_id,
+            project["version"],
+            "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
+        )
+
+        self.assertEqual("0123456789ab", project["work_items"][0]["links"][0]["label"])
+        self.assertEqual("work_item_link.added", project["recent_events"][0]["operation"])
+
     def test_checkpoint_is_returned_as_resume_context(self) -> None:
         project = self.store.record_checkpoint(
             "camera-reboot",

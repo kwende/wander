@@ -151,15 +151,28 @@ def complete_work_item(
     expected_version: int,
     evidence: str,
     summary: str,
+    commit_urls: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Complete an active work item. Concrete completion evidence is mandatory."""
+    """Complete an active item and atomically attach any relevant GitHub commits."""
     return store.complete_work_item(
         project,
         item_id,
         expected_version,
         evidence,
         summary,
+        commit_urls,
     )
+
+
+@mcp.tool()
+def add_work_item_link(
+    project: str,
+    item_id: str,
+    expected_version: int,
+    commit_url: str,
+) -> dict[str, Any]:
+    """Attach a GitHub commit discovered after a work item was completed."""
+    return store.add_work_item_link(project, item_id, expected_version, commit_url)
 
 
 @mcp.tool()

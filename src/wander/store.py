@@ -27,6 +27,7 @@ ITEM_TRANSITIONS = {
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
+COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
 
 
 class WanderError(Exception):
@@ -136,6 +137,20 @@ class WanderStore:
                 CREATE INDEX IF NOT EXISTS ix_project_links_project_sequence
                     ON project_links(project_id, sequence);
 
+                CREATE TABLE IF NOT EXISTS work_item_links (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+                    label TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(work_item_id, url)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_work_item_links_item_sequence
+                    ON work_item_links(work_item_id, sequence);
+
                 CREATE TABLE IF NOT EXISTS thread_references (
                     id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -195,6 +210,27 @@ class WanderStore:
     @staticmethod
     def _dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return dict(row) if row is not None else None
+
+    @staticmethod
+    def _github_commit_link(url: str) -> tuple[str, str]:
+        normalized = url.strip()
+        parsed_url = urlparse(normalized)
+        path_parts = [part for part in parsed_url.path.split("/") if part]
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.hostname != "github.com"
+            or len(path_parts) != 4
+            or path_parts[2] != "commit"
+            or not COMMIT_SHA_PATTERN.fullmatch(path_parts[3])
+            or parsed_url.params
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise ValidationError(
+                "commit URL must have the form "
+                "https://github.com/<owner>/<repository>/commit/<sha>"
+            )
+        return normalized, path_parts[3][:12]
 
     def _project_row(self, connection: sqlite3.Connection, project: str) -> sqlite3.Row:
         row = connection.execute(
@@ -333,6 +369,19 @@ class WanderStore:
                     (project_row["id"],),
                 ).fetchall()
             ]
+            links_by_item: dict[str, list[dict[str, Any]]] = {}
+            for row in connection.execute(
+                """
+                SELECT * FROM work_item_links
+                WHERE project_id = ?
+                ORDER BY sequence, created_at
+                """,
+                (project_row["id"],),
+            ).fetchall():
+                link = dict(row)
+                links_by_item.setdefault(link["work_item_id"], []).append(link)
+            for item in result["work_items"]:
+                item["links"] = links_by_item.get(item["id"], [])
             result["links"] = [
                 dict(row)
                 for row in connection.execute(
@@ -591,9 +640,13 @@ class WanderStore:
         summary: str,
         evidence: str = "",
         notes: str | None = None,
+        commit_urls: list[str] | None = None,
     ) -> dict[str, Any]:
         if target_status not in ITEM_STATUSES:
             raise ValidationError(f"Unknown work item status: {target_status}")
+        if commit_urls and target_status != "complete":
+            raise ValidationError("commit URLs may only be attached while completing an item")
+        commit_links = [self._github_commit_link(url) for url in (commit_urls or [])]
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             project_row = self._locked_project(connection, project, expected_version)
@@ -610,6 +663,35 @@ class WanderStore:
             if target_status == "complete" and not evidence.strip():
                 raise ValidationError("completion evidence is required")
             next_notes = item["notes"] if notes is None else notes.strip()
+            next_link_sequence = connection.execute(
+                """
+                SELECT COALESCE(MAX(sequence), 0) + 10
+                FROM work_item_links
+                WHERE work_item_id = ?
+                """,
+                (item_id,),
+            ).fetchone()[0]
+            for offset, (url, label) in enumerate(commit_links):
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO work_item_links (
+                            id, project_id, work_item_id, label, url,
+                            sequence, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            project_row["id"],
+                            item_id,
+                            label,
+                            url,
+                            next_link_sequence + (offset * 10),
+                            utc_now(),
+                        ),
+                    )
+                except sqlite3.IntegrityError as error:
+                    raise ConflictError(f"Work item commit link already exists: {url}") from error
             connection.execute(
                 """
                 UPDATE work_items
@@ -650,6 +732,7 @@ class WanderStore:
         expected_version: int,
         evidence: str,
         summary: str,
+        commit_urls: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._transition_item(
             project,
@@ -658,7 +741,67 @@ class WanderStore:
             "complete",
             self._required(summary, "summary"),
             evidence=self._required(evidence, "evidence"),
+            commit_urls=commit_urls,
         )
+
+    def add_work_item_link(
+        self,
+        project: str,
+        item_id: str,
+        expected_version: int,
+        commit_url: str,
+    ) -> dict[str, Any]:
+        commit_url, label = self._github_commit_link(commit_url)
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project_row = self._locked_project(connection, project, expected_version)
+            item = connection.execute(
+                "SELECT * FROM work_items WHERE id = ? AND project_id = ?",
+                (item_id, project_row["id"]),
+            ).fetchone()
+            if item is None:
+                raise NotFoundError(f"Work item not found in project: {item_id}")
+            if item["status"] != "complete":
+                raise ValidationError("commit links may only be added to completed work items")
+            sequence = connection.execute(
+                """
+                SELECT COALESCE(MAX(sequence), 0) + 10
+                FROM work_item_links
+                WHERE work_item_id = ?
+                """,
+                (item_id,),
+            ).fetchone()[0]
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO work_item_links (
+                        id, project_id, work_item_id, label, url,
+                        sequence, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        project_row["id"],
+                        item_id,
+                        label,
+                        commit_url,
+                        sequence,
+                        utc_now(),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ConflictError(
+                    f"Work item commit link already exists: {commit_url}"
+                ) from error
+            self._advance(
+                connection,
+                project_row,
+                "work_item_link.added",
+                f"Attached commit {label} to work item: {item['title']}",
+                evidence=commit_url,
+            )
+            connection.commit()
+        return self.get_project(project)
 
     def block_work_item(
         self,

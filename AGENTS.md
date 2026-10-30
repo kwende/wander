@@ -9,6 +9,9 @@ boundaries:
 - Every mutation requires `expected_version`, advances the project version, and
   appends a provenance event in the same transaction.
 - Completion requires concrete evidence.
+- When code implements a completed item, preserve verified GitHub commit links
+  as structured work-item provenance; absence of code is not a completion
+  failure.
 - Treat `owner_thread_id` as a soft workflow bumper, not authorization. A
   non-owner write succeeds and returns `writer_warning`; surface that warning
   prominently instead of hiding it or describing the write as forbidden.

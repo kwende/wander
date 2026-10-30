@@ -52,6 +52,11 @@ Shared project: http://localhost:8765/?project=<slug>&shared=1
 - Update work-item state after meaningful progress. Record a checkpoint at a
   semantic stopping point, context switch, important decision, blocker, or
   handoff—not after every minor edit.
+- Before completing a work item, determine whether its implementation produced
+  relevant GitHub commits. Pass verified commit URLs through `commit_urls` so
+  completion and code provenance are recorded atomically. Do not invent links
+  or require them for research, planning, operational, or other non-code work.
+  If a commit is discovered later, attach it with `add_work_item_link`.
 - If the plan changes, add or abandon items while preserving their history.
 - Keep the dashboard concise. Put causal detail, invariants, open questions,
   and the best resume point in the checkpoint rather than work-item titles.
