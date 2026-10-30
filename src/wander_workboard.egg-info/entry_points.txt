@@ -1,3 +1,0 @@
-[console_scripts]
-wander-mcp = wander.mcp_server:main
-wander-web = wander.web:main
