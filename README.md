@@ -21,6 +21,36 @@ surface exists.
 The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
 setting up the environment so the repository MCP registry is rediscovered.
 
+## Codex integration
+
+For a personal installation that is available from every checkout, register the
+MCP server and copy the skill into the Codex user skill directory:
+
+```powershell
+codex mcp add wander -- powershell -NoProfile -ExecutionPolicy Bypass -File D:\repos\wander\scripts\start-mcp.ps1
+Copy-Item -Recurse -Force .\skills\wander "$env:USERPROFILE\.codex\skills\wander"
+```
+
+Restart Codex after changing MCP or skill registrations. A conversation can
+then say `Make a Wander out of our task`; the skill discovers or creates the
+project, attaches the host-provided conversation identity, and builds the
+high-level work-item sequence.
+
+The repository is also a local Agent Plugin package. Its manifest is
+`plugin.json`, its MCP declaration is `mcp.json`, and its packaged skill is in
+`skills/wander/`. `.agents/plugins/marketplace.json` makes that package
+discoverable as `wander-workboard@wander-local` after registering the local
+marketplace:
+
+```powershell
+codex plugin marketplace add D:\repos\wander
+codex plugin list
+```
+
+Choose one installation model. Installing the plugin is unnecessary when the
+same MCP server and skill are already registered globally; doing both would
+expose duplicate integrations backed by the same Wander database.
+
 ## State model
 
 ```text

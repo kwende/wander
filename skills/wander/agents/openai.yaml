@@ -1,0 +1,15 @@
+interface:
+  display_name: "Wander"
+  short_description: "Track ongoing work in a durable visual checklist"
+  default_prompt: "Use $wander to create a durable workboard for this task."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "wander"
+      description: "Durable Wander project and work-item ledger"
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true
+

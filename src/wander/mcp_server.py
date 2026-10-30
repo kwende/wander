@@ -193,6 +193,28 @@ def attach_thread(
 
 
 @mcp.tool()
+def attach_current_thread(
+    project: str,
+    expected_version: int,
+    title: str,
+    role: str,
+) -> dict[str, Any]:
+    """Attach the current Codex conversation using its host-provided thread identity."""
+    if not store.writer_thread_link:
+        raise ValidationError(
+            "The current thread identity is unavailable. Ask the user to supply a "
+            "codex://threads/<thread-id> deep link and use attach_thread instead."
+        )
+    return store.attach_thread(
+        project,
+        expected_version,
+        store.writer_thread_link,
+        title,
+        role,
+    )
+
+
+@mcp.tool()
 def set_project_status(
     project: str,
     expected_version: int,

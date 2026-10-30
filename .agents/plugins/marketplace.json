@@ -1,0 +1,26 @@
+{
+  "name": "wander-local",
+  "interface": {
+    "displayName": "Wander Local"
+  },
+  "plugins": [
+    {
+      "name": "wander-workboard",
+      "description": "Durable visual workboards for ongoing Codex tasks.",
+      "version": "0.1.0",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "interface": {
+        "displayName": "Wander"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+

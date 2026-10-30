@@ -15,6 +15,9 @@ boundaries:
 - Do not infer or scrape Codex thread IDs from internal session storage. Attach
   only supported `codex://threads/<thread-id>` links supplied through a stable
   product surface.
+- Prefer `attach_current_thread` when the host exposes `CODEX_THREAD_ID` or
+  `CODEX_SESSION_ID`; ask for a copied deep link and use `attach_thread` only
+  when host identity is unavailable.
 
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint
