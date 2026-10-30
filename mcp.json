@@ -9,7 +9,7 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "D:\\repos\\wander\\scripts\\start-mcp.ps1"
+        "scripts/start-mcp.ps1"
       ],
       "cwd": "${PLUGIN_ROOT}"
     }

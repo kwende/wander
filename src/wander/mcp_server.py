@@ -36,7 +36,7 @@ def current_thread_id() -> str | None:
 store = WanderStore(default_database_path(), current_thread_id())
 mcp = MCPServer(
     "wander",
-    version="0.4.0",
+    version="0.5.0",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
         "Identify the current Codex thread before the first mutation. "
