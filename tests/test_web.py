@@ -44,6 +44,13 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertEqual("Wander", result["title"])
         self.assertEqual("Issue", result["links"][0]["label"])
 
+    def test_initial_page_includes_wander_tagline(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/") as response:
+            page = response.read().decode("utf-8")
+        self.assertIn("Wander", page)
+        self.assertIn("Not all who wander are lost.", page)
+        self.assertIn("Loading the workboard", page)
+
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/api/projects",
