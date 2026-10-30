@@ -21,6 +21,9 @@ boundaries:
 - A globally registered MCP process may not inherit per-thread environment
   values. Bind its session once with `identify_thread`; never switch that
   identity within the same server process.
+- Cross-thread delegation exposes the sender as `source_thread_id`; that is not
+  the target conversation's identity. Read the target command environment's
+  `CODEX_THREAD_ID` or `CODEX_SESSION_ID` instead.
 
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint

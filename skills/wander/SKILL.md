@@ -13,11 +13,13 @@ item titles instantly understandable in the dashboard.
 
 1. Call `list_projects` before creating anything. Reuse a clearly matching
    active project; do not create duplicates from similar conversation wording.
-2. Before the first mutation, read `CODEX_THREAD_ID` (or `CODEX_SESSION_ID`) from
-   the host environment and call `identify_thread` with
-   `codex://threads/<thread-id>`. This environment value is a supported host
-   surface; do not scrape Codex session files. If neither value is available,
-   ask the user for the copied deep link.
+2. Before the first mutation, execute a read-only host command to read
+   `CODEX_THREAD_ID` (or `CODEX_SESSION_ID`) from the command environment, then
+   call `identify_thread` with `codex://threads/<thread-id>`. Do not substitute
+   a delegation's `source_thread_id`: that identifies the sending conversation,
+   not the thread performing this work. The environment value is a supported
+   host surface; do not scrape Codex session files. If neither value is
+   available, ask the user for the copied deep link.
 3. When creating a project, derive a short title, plain-language objective, and
    slug from the task. Ask only when a materially different interpretation is
    plausible.
