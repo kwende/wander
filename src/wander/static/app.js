@@ -4,7 +4,11 @@ const refreshButton = document.querySelector("#refresh-button");
 const dashboard = document.querySelector("#dashboard");
 const template = document.querySelector("#project-template");
 const query = new URLSearchParams(window.location.search);
+const requestedProject = query.get("project");
+const requestedItem = query.get("item");
 const sharedProject = query.get("shared") === "1" ? query.get("project") : null;
+const localAuthoringHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const isLocalAuthoringView = !sharedProject && localAuthoringHosts.has(window.location.hostname);
 
 const markers = {
   pending: "○",
@@ -34,7 +38,7 @@ function buildShareUrl(project) {
   return url.toString();
 }
 
-async function copyShareUrl(link, url) {
+async function copyUrl(control, url, defaultLabel) {
   let copyTarget;
   try {
     if (navigator.clipboard?.writeText && window.isSecureContext) {
@@ -49,13 +53,32 @@ async function copyShareUrl(link, url) {
       copyTarget.select();
       if (!document.execCommand("copy")) throw new Error("Copy failed");
     }
-    link.textContent = "Copied";
-    window.setTimeout(() => { link.textContent = "Share"; }, 1800);
+    control.textContent = "Copied";
+    window.setTimeout(() => { control.textContent = defaultLabel; }, 1800);
   } catch {
     window.prompt("Copy this shareable link:", url);
   } finally {
     copyTarget?.remove();
   }
+}
+
+function buildCodexUrl(project, item) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("project", project.slug);
+  url.searchParams.set("item", item.id);
+  return url.toString();
+}
+
+function createCodexLink(project, item) {
+  const control = document.createElement("button");
+  control.className = "codex-link";
+  control.type = "button";
+  control.textContent = "Codex link";
+  control.title = `Copy Codex link for ${item.title}`;
+  control.setAttribute("aria-label", control.title);
+  control.addEventListener("click", () => copyUrl(control, buildCodexUrl(project, item), "Codex link"));
+  return control;
 }
 
 function renderEmpty(title, detail = "") {
@@ -82,7 +105,7 @@ function renderProject(project) {
   shareLink.hidden = Boolean(sharedProject);
   shareLink.addEventListener("click", (event) => {
     event.preventDefault();
-    copyShareUrl(shareLink, shareUrl);
+    copyUrl(shareLink, shareUrl, "Share");
   });
 
   const projectLinks = project.links || [];
@@ -124,15 +147,27 @@ function renderProject(project) {
         </div>`;
       element.querySelector(".work-title").textContent = item.title;
       element.querySelector(".work-notes").textContent = detail;
+      if (item.id === requestedItem) {
+        element.dataset.referenced = "true";
+        element.setAttribute("aria-current", "true");
+      }
+      if (isLocalAuthoringView) {
+        element.appendChild(createCodexLink(project, item));
+      }
 
       const children = project.work_items.filter(
         (candidate) => candidate.parent_id === item.id && candidate.status !== "abandoned",
       );
-      if (["active", "blocked"].includes(item.status) && children.length) {
+      const referencesChild = children.some((child) => child.id === requestedItem);
+      if ((["active", "blocked"].includes(item.status) || referencesChild) && children.length) {
         const checklist = document.createElement("ul");
         checklist.className = "subtask-list";
         for (const child of children) {
           const checklistItem = document.createElement("li");
+          if (child.id === requestedItem) {
+            checklistItem.dataset.referenced = "true";
+            checklistItem.setAttribute("aria-current", "true");
+          }
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.disabled = true;
@@ -140,6 +175,9 @@ function renderProject(project) {
           const label = document.createElement("span");
           label.textContent = child.title;
           checklistItem.append(checkbox, label);
+          if (isLocalAuthoringView) {
+            checklistItem.appendChild(createCodexLink(project, child));
+          }
           checklist.appendChild(checklistItem);
         }
         element.querySelector("div").appendChild(checklist);
@@ -234,6 +272,6 @@ if (sharedProject) {
   loadProject(sharedProject);
 } else {
   setInterval(() => loadProjects(select.value), 15000);
-  loadProjects();
+  loadProjects(requestedProject);
 }
 

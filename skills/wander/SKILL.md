@@ -42,6 +42,18 @@ Shared project: http://localhost:8765/?project=<slug>&shared=1
 
 ## Continue tracked work
 
+When the user supplies a local Wander Codex link of the form
+`http://localhost:8765/?project=<slug>&item=<work-item-id>` (the host or port
+may differ), treat it as an identity pointer rather than sufficient context:
+
+1. Parse the `project` and `item` query parameters.
+2. Call `get_project` for that project through Wander MCP.
+3. Locate the exact work item by ID. Report clearly if it no longer exists.
+4. Reconstruct the useful context from authoritative state: the item, its
+   parent, children, completion evidence, attached commit links, current project
+   phase, and latest checkpoint. Do not rely on task wording embedded in chat.
+5. Answer or continue work from that reconstructed context.
+
 - Begin by calling `get_resume_context`; do not reconstruct state from chat
   history when Wander already records it.
 - Pass the last-read project `version` to every mutation. On a stale-version

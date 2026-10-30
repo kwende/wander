@@ -213,7 +213,7 @@ button:hover { border-color: var(--accent); }
 
 .work-item {
   display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr);
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
   gap: 0.75rem;
   border: 1px solid transparent;
   border-radius: 0.75rem;
@@ -223,6 +223,7 @@ button:hover { border-color: var(--accent); }
 .work-item[data-status="active"] { border-color: rgba(102, 227, 188, 0.32); background: var(--accent-soft); }
 .work-item[data-status="blocked"] { border-color: rgba(244, 127, 136, 0.35); background: rgba(244, 127, 136, 0.08); }
 .work-item[data-status="complete"], .work-item[data-status="abandoned"] { opacity: 0.58; }
+.work-item[data-referenced="true"] { border-color: var(--complete); box-shadow: 0 0 0 1px rgba(126, 182, 255, 0.3); }
 .work-marker { color: var(--muted); font-weight: 800; }
 .work-item[data-status="active"] .work-marker {
   align-self: start;
@@ -250,7 +251,21 @@ button:hover { border-color: var(--accent); }
 }
 
 .subtask-list li { display: flex; align-items: center; gap: 0.55rem; color: var(--text); font-size: 0.82rem; }
+.subtask-list li[data-referenced="true"] { border-radius: 0.4rem; background: rgba(126, 182, 255, 0.12); padding: 0.35rem 0.45rem; }
 .subtask-list input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+
+.codex-link {
+  align-self: start;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.2rem 0.35rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.codex-link:hover { border-color: var(--accent); color: var(--accent); }
+.subtask-list .codex-link { margin-left: auto; }
 
 .commit-links {
   align-items: center;

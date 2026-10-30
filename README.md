@@ -25,6 +25,11 @@ completed item can also retain verified GitHub commit links as code provenance.
 The shared-project URL (`?project=<slug>&shared=1`) hides project selection and
 the Share control while preserving the project links and work state.
 
+On a localhost, non-shared dashboard, each visible work item also exposes a
+`Codex link`. It copies a stable project-and-item identity URL that another
+Codex chat resolves through Wander MCP. The control is hidden from shared and
+LAN viewers; this is an authoring convenience, not an authentication boundary.
+
 The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
 setting up the environment so the repository MCP registry is rediscovered.
 
