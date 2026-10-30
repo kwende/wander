@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+src/wander/__init__.py
+src/wander/mcp_server.py
+src/wander/store.py
+src/wander/web.py
+src/wander/static/app.js
+src/wander/static/index.html
+src/wander/static/styles.css
+src/wander_workboard.egg-info/PKG-INFO
+src/wander_workboard.egg-info/SOURCES.txt
+src/wander_workboard.egg-info/dependency_links.txt
+src/wander_workboard.egg-info/entry_points.txt
+src/wander_workboard.egg-info/requires.txt
+src/wander_workboard.egg-info/top_level.txt
+tests/test_store.py
+tests/test_web.py

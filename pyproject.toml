@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wander-workboard"
+version = "0.1.0"
+description = "A durable, MCP-managed workboard for Codex projects"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp==2.3.0",
+]
+
+[project.scripts]
+wander-mcp = "wander.mcp_server:main"
+wander-web = "wander.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+wander = ["static/*"]
+

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Wander durable workboard">
+  <title>Wander</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="brand-name">Wander</p>
+      <h1>Durable Workboard</h1>
+    </div>
+    <div class="topbar-actions">
+      <label id="project-select-label" for="project-select">Project</label>
+      <select id="project-select" aria-label="Select project"></select>
+      <button id="refresh-button" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <main id="dashboard" class="dashboard" aria-live="polite">
+    <section class="empty-state">
+      <p class="eyebrow">Connecting</p>
+      <h2>Loading the workboard…</h2>
+    </section>
+  </main>
+
+  <template id="project-template">
+    <section class="hero panel">
+      <div>
+        <div class="status-line">
+          <span class="pulse" aria-hidden="true"></span>
+          <span data-field="status"></span>
+          <span class="version" data-field="version"></span>
+        </div>
+        <p class="project-title">
+          <span>Project:</span>
+          <strong data-field="title"></strong>
+          <a class="share-link" data-action="share" href="#">Share</a>
+        </p>
+        <p class="objective">
+          <span>Project Description:</span>
+          <span data-field="objective"></span>
+        </p>
+      </div>
+    </section>
+
+    <section class="main-grid">
+      <div class="panel work-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Execution</p>
+            <h3>Work items</h3>
+          </div>
+          <span class="progress-label" data-field="progress"></span>
+        </div>
+        <div class="progress-track"><span data-field="progress-bar"></span></div>
+        <ol class="work-list" data-list="work-items"></ol>
+      </div>
+    </section>
+
+    <section class="panel activity-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Provenance</p>
+          <h3>Recent activity</h3>
+        </div>
+        <span data-field="updated"></span>
+      </div>
+      <div class="event-list" data-list="events"></div>
+    </section>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
+
