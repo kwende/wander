@@ -130,6 +130,58 @@ class WanderStoreTests(unittest.TestCase):
                 "codex://threads/01a18d56-4e60-7050-a88d-c64cc83d5bae"
             )
 
+    def test_project_links_are_versioned_and_ordered(self) -> None:
+        project = self.store.add_project_link(
+            "camera-reboot",
+            self.project["version"],
+            "Pull request #1127",
+            "https://github.com/Ocuvera/Ocuvera/pull/1127",
+            sequence=20,
+        )
+        project = self.store.add_project_link(
+            "camera-reboot",
+            project["version"],
+            "Issue #1099",
+            "https://github.com/Ocuvera/Ocuvera/issues/1099",
+            sequence=10,
+        )
+
+        self.assertEqual(
+            ["Issue #1099", "Pull request #1127"],
+            [link["label"] for link in project["links"]],
+        )
+        self.assertEqual("project_link.added", project["recent_events"][0]["operation"])
+        self.assertEqual(3, project["version"])
+
+    def test_project_link_rejects_unsafe_url(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.add_project_link(
+                "camera-reboot",
+                self.project["version"],
+                "Unsafe",
+                "javascript:alert(1)",
+            )
+
+    def test_project_link_can_be_removed_with_history(self) -> None:
+        project = self.store.add_project_link(
+            "camera-reboot",
+            self.project["version"],
+            "Issue #1099",
+            "https://github.com/Ocuvera/Ocuvera/issues/1099",
+        )
+        link_id = project["links"][0]["id"]
+
+        project = self.store.remove_project_link(
+            "camera-reboot",
+            link_id,
+            project["version"],
+            "Issue was superseded",
+        )
+
+        self.assertEqual([], project["links"])
+        self.assertEqual("project_link.removed", project["recent_events"][0]["operation"])
+        self.assertIn("Issue was superseded", project["recent_events"][0]["summary"])
+
     def test_completed_project_cannot_be_reactivated(self) -> None:
         project = self.store.set_project_status(
             "camera-reboot",

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlparse
 
 
 PROJECT_STATUSES = {"active", "paused", "completed", "archived"}
@@ -120,6 +121,20 @@ class WanderStore:
 
                 CREATE INDEX IF NOT EXISTS ix_work_items_project_sequence
                     ON work_items(project_id, sequence);
+
+                CREATE TABLE IF NOT EXISTS project_links (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    label TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(project_id, url)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_project_links_project_sequence
+                    ON project_links(project_id, sequence);
 
                 CREATE TABLE IF NOT EXISTS thread_references (
                     id TEXT PRIMARY KEY,
@@ -318,6 +333,13 @@ class WanderStore:
                     (project_row["id"],),
                 ).fetchall()
             ]
+            result["links"] = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM project_links WHERE project_id = ? ORDER BY sequence, created_at",
+                    (project_row["id"],),
+                ).fetchall()
+            ]
             result["threads"] = [
                 dict(row)
                 for row in connection.execute(
@@ -368,6 +390,7 @@ class WanderStore:
                 item for item in detail["work_items"] if item["status"] in {"active", "blocked"}
             ],
             "next_items": [item for item in detail["work_items"] if item["status"] == "pending"][:5],
+            "links": detail["links"],
             "latest_checkpoint": detail["latest_checkpoint"],
             "threads": detail["threads"],
         }
@@ -420,6 +443,85 @@ class WanderStore:
                 "project.released",
                 f"Released project writer ownership: {reason}",
                 project_updates={"owner_thread_id": None},
+            )
+            connection.commit()
+        return self.get_project(project)
+
+    def add_project_link(
+        self,
+        project: str,
+        expected_version: int,
+        label: str,
+        url: str,
+        sequence: int | None = None,
+    ) -> dict[str, Any]:
+        label = self._required(label, "label")
+        url = self._required(url, "url")
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValidationError("url must be an absolute http:// or https:// URL")
+        now = utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project_row = self._locked_project(connection, project, expected_version)
+            if sequence is None:
+                sequence = connection.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 10 FROM project_links WHERE project_id = ?",
+                    (project_row["id"],),
+                ).fetchone()[0]
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO project_links (
+                        id, project_id, label, url, sequence, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        project_row["id"],
+                        label,
+                        url,
+                        sequence,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ConflictError(f"Project link already exists: {url}") from error
+            self._advance(
+                connection,
+                project_row,
+                "project_link.added",
+                f"Added project link: {label}",
+                evidence=url,
+            )
+            connection.commit()
+        return self.get_project(project)
+
+    def remove_project_link(
+        self,
+        project: str,
+        link_id: str,
+        expected_version: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        reason = self._required(reason, "reason")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project_row = self._locked_project(connection, project, expected_version)
+            link = connection.execute(
+                "SELECT * FROM project_links WHERE id = ? AND project_id = ?",
+                (link_id, project_row["id"]),
+            ).fetchone()
+            if link is None:
+                raise NotFoundError(f"Project link not found in project: {link_id}")
+            connection.execute("DELETE FROM project_links WHERE id = ?", (link_id,))
+            self._advance(
+                connection,
+                project_row,
+                "project_link.removed",
+                f"Removed project link '{link['label']}': {reason}",
+                evidence=link["url"],
             )
             connection.commit()
         return self.get_project(project)

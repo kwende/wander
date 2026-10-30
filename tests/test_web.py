@@ -32,9 +32,17 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def test_project_api_is_readable(self) -> None:
+        project = self.store.get_project("wander")
+        self.store.add_project_link(
+            "wander",
+            project["version"],
+            "Issue",
+            "https://github.com/kwende/wander/issues/1",
+        )
         with urllib.request.urlopen(f"{self.base_url}/api/projects/wander") as response:
             result = json.load(response)
         self.assertEqual("Wander", result["title"])
+        self.assertEqual("Issue", result["links"][0]["label"])
 
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(

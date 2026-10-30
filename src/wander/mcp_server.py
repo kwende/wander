@@ -89,6 +89,29 @@ def release_project(project: str, expected_version: int, reason: str) -> dict[st
 
 
 @mcp.tool()
+def add_project_link(
+    project: str,
+    expected_version: int,
+    label: str,
+    url: str,
+    sequence: int | None = None,
+) -> dict[str, Any]:
+    """Add an ordered http(s) reference such as an issue, pull request, or build."""
+    return store.add_project_link(project, expected_version, label, url, sequence)
+
+
+@mcp.tool()
+def remove_project_link(
+    project: str,
+    link_id: str,
+    expected_version: int,
+    reason: str,
+) -> dict[str, Any]:
+    """Remove an obsolete project reference while preserving the reason in history."""
+    return store.remove_project_link(project, link_id, expected_version, reason)
+
+
+@mcp.tool()
 def add_work_item(
     project: str,
     expected_version: int,
