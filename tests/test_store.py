@@ -21,6 +21,34 @@ class WanderStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
+    def project_state(self) -> dict:
+        return self.store.get_project("camera-reboot")
+
+    def test_mutations_return_compact_chainable_deltas(self) -> None:
+        added = self.store.add_work_item(
+            "camera-reboot",
+            self.project["version"],
+            "Collect evidence",
+        )
+        item_id = added["changed"]["work_item_ids"][0]
+        started = self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            added["version"],
+            "Collecting evidence",
+        )
+
+        self.assertEqual(
+            {"project", "version", "operation", "changed", "writer_warning"},
+            set(started),
+        )
+        self.assertEqual("camera-reboot", started["project"])
+        self.assertEqual("work_item.active", started["operation"])
+        self.assertEqual({"work_item_ids": [item_id]}, started["changed"])
+        self.assertEqual(3, started["version"])
+        self.assertNotIn("work_items", started)
+        self.assertNotIn("recent_events", started)
+
     def test_stale_writer_is_rejected(self) -> None:
         version = self.project["version"]
         self.store.add_work_item("camera-reboot", version, "Collect evidence")
@@ -35,7 +63,7 @@ class WanderStoreTests(unittest.TestCase):
             "Prove recovery",
             "A controlled camera fault recovers.",
         )
-        item_id = project["work_items"][0]["id"]
+        item_id = project["changed"]["work_item_ids"][0]
 
         with self.assertRaises(ValidationError):
             self.store.complete_work_item(
@@ -60,7 +88,8 @@ class WanderStoreTests(unittest.TestCase):
             "Controlled recovery passed",
         )
 
-        self.assertEqual("complete", project["work_items"][0]["status"])
+        state = self.project_state()
+        self.assertEqual("complete", state["work_items"][0]["status"])
         self.assertEqual(4, project["version"])
 
     def test_parent_cannot_complete_before_child_items(self) -> None:
@@ -69,14 +98,14 @@ class WanderStoreTests(unittest.TestCase):
             self.project["version"],
             "Implement recovery",
         )
-        parent_id = project["work_items"][0]["id"]
+        parent_id = project["changed"]["work_item_ids"][0]
         project = self.store.add_work_item(
             "camera-reboot",
             project["version"],
             "Validate recovery",
             parent_id=parent_id,
         )
-        child_id = next(item for item in project["work_items"] if item["parent_id"])["id"]
+        child_id = project["changed"]["work_item_ids"][0]
         project = self.store.start_work_item(
             "camera-reboot",
             parent_id,
@@ -114,7 +143,11 @@ class WanderStoreTests(unittest.TestCase):
             "Parent complete",
         )
 
-        parent = next(item for item in project["work_items"] if item["id"] == parent_id)
+        parent = next(
+            item
+            for item in self.project_state()["work_items"]
+            if item["id"] == parent_id
+        )
         self.assertEqual("complete", parent["status"])
 
     def test_completion_atomically_attaches_commit_links(self) -> None:
@@ -123,7 +156,7 @@ class WanderStoreTests(unittest.TestCase):
             self.project["version"],
             "Implement recovery",
         )
-        item_id = project["work_items"][0]["id"]
+        item_id = project["changed"]["work_item_ids"][0]
         project = self.store.start_work_item(
             "camera-reboot",
             item_id,
@@ -143,9 +176,13 @@ class WanderStoreTests(unittest.TestCase):
             ],
         )
 
-        item = project["work_items"][0]
+        item = self.project_state()["work_items"][0]
         self.assertEqual("complete", item["status"])
         self.assertEqual(["0123456789ab", "89abcdef0123"], [link["label"] for link in item["links"]])
+        self.assertEqual(
+            [link["id"] for link in item["links"]],
+            project["changed"]["work_item_link_ids"],
+        )
         self.assertEqual(4, project["version"])
 
     def test_invalid_commit_link_leaves_item_active(self) -> None:
@@ -154,7 +191,7 @@ class WanderStoreTests(unittest.TestCase):
             self.project["version"],
             "Implement recovery",
         )
-        item_id = project["work_items"][0]["id"]
+        item_id = project["changed"]["work_item_ids"][0]
         project = self.store.start_work_item(
             "camera-reboot",
             item_id,
@@ -183,7 +220,7 @@ class WanderStoreTests(unittest.TestCase):
             self.project["version"],
             "Document recovery",
         )
-        item_id = project["work_items"][0]["id"]
+        item_id = project["changed"]["work_item_ids"][0]
 
         with self.assertRaises(ValidationError):
             self.store.add_work_item_link(
@@ -213,8 +250,9 @@ class WanderStoreTests(unittest.TestCase):
             "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
         )
 
-        self.assertEqual("0123456789ab", project["work_items"][0]["links"][0]["label"])
-        self.assertEqual("work_item_link.added", project["recent_events"][0]["operation"])
+        state = self.project_state()
+        self.assertEqual("0123456789ab", state["work_items"][0]["links"][0]["label"])
+        self.assertEqual("work_item_link.added", state["recent_events"][0]["operation"])
 
     def test_checkpoint_is_returned_as_resume_context(self) -> None:
         project = self.store.record_checkpoint(
@@ -232,6 +270,10 @@ class WanderStoreTests(unittest.TestCase):
 
         self.assertEqual(project["version"], context["project"]["version"])
         self.assertEqual(
+            [context["latest_checkpoint"]["id"]],
+            project["changed"]["checkpoint_ids"],
+        )
+        self.assertEqual(
             "Run the depth-only perturbation.",
             context["latest_checkpoint"]["resume_here"],
         )
@@ -246,6 +288,21 @@ class WanderStoreTests(unittest.TestCase):
                 "primary",
             )
 
+    def test_thread_mutation_returns_stable_reference_id(self) -> None:
+        result = self.store.attach_thread(
+            "camera-reboot",
+            self.project["version"],
+            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
+            "Investigation",
+            "primary",
+        )
+        state = self.project_state()
+
+        self.assertEqual(
+            [state["threads"][0]["id"]],
+            result["changed"]["thread_reference_ids"],
+        )
+
     def test_unidentified_server_can_bind_once_and_create_project(self) -> None:
         unidentified = WanderStore(
             Path(self.temporary_directory.name) / "unidentified.db"
@@ -254,20 +311,21 @@ class WanderStoreTests(unittest.TestCase):
         identity = unidentified.identify_writer_thread(
             "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
         )
-        project = unidentified.create_project(
+        result = unidentified.create_project(
             "vc-runtime-cleanup",
             "VC Runtime Cleanup",
             "Align the native toolchain and packaged runtime.",
         )
 
+        state = unidentified.get_project(result["project"])
         self.assertEqual("identified", identity["status"])
         self.assertEqual(
             "01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            project["owner_thread_id"],
+            state["owner_thread_id"],
         )
         self.assertEqual(
             "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            project["recent_events"][0]["source_thread"],
+            state["recent_events"][0]["source_thread"],
         )
 
     def test_mcp_session_cannot_switch_thread_identity(self) -> None:
@@ -299,11 +357,12 @@ class WanderStoreTests(unittest.TestCase):
             sequence=10,
         )
 
+        state = self.project_state()
         self.assertEqual(
             ["Issue #1099", "Pull request #1127"],
-            [link["label"] for link in project["links"]],
+            [link["label"] for link in state["links"]],
         )
-        self.assertEqual("project_link.added", project["recent_events"][0]["operation"])
+        self.assertEqual("project_link.added", state["recent_events"][0]["operation"])
         self.assertEqual(3, project["version"])
 
     def test_project_link_rejects_unsafe_url(self) -> None:
@@ -322,7 +381,7 @@ class WanderStoreTests(unittest.TestCase):
             "Issue #1099",
             "https://github.com/Ocuvera/Ocuvera/issues/1099",
         )
-        link_id = project["links"][0]["id"]
+        link_id = project["changed"]["project_link_ids"][0]
 
         project = self.store.remove_project_link(
             "camera-reboot",
@@ -331,9 +390,10 @@ class WanderStoreTests(unittest.TestCase):
             "Issue was superseded",
         )
 
-        self.assertEqual([], project["links"])
-        self.assertEqual("project_link.removed", project["recent_events"][0]["operation"])
-        self.assertIn("Issue was superseded", project["recent_events"][0]["summary"])
+        state = self.project_state()
+        self.assertEqual([], state["links"])
+        self.assertEqual("project_link.removed", state["recent_events"][0]["operation"])
+        self.assertIn("Issue was superseded", state["recent_events"][0]["summary"])
 
     def test_completed_project_cannot_be_reactivated(self) -> None:
         project = self.store.set_project_status(
@@ -363,7 +423,7 @@ class WanderStoreTests(unittest.TestCase):
 
         self.assertIn("codex://threads/test-thread", project["writer_warning"])
         self.assertIn("write succeeded", project["writer_warning"])
-        self.assertEqual("test-thread", project["owner_thread_id"])
+        self.assertEqual("test-thread", self.project_state()["owner_thread_id"])
 
     def test_owner_can_release_and_another_thread_can_claim(self) -> None:
         project = self.store.release_project(
@@ -379,8 +439,9 @@ class WanderStoreTests(unittest.TestCase):
             "Continue from new thread",
         )
 
-        self.assertEqual("other-thread", project["owner_thread_id"])
-        self.assertEqual(1, len(project["work_items"]))
+        state = self.project_state()
+        self.assertEqual("other-thread", state["owner_thread_id"])
+        self.assertEqual(1, len(state["work_items"]))
 
 
 if __name__ == "__main__":

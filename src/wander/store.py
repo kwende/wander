@@ -317,6 +317,31 @@ class WanderStore:
         )
         return after_version
 
+    def _mutation_result(
+        self,
+        connection: sqlite3.Connection,
+        project_id: str,
+        operation: str,
+        changed: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
+        project_row = connection.execute(
+            "SELECT * FROM projects WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+        if project_row is None:
+            raise NotFoundError(f"Project not found after mutation: {project_id}")
+        return {
+            "project": project_row["slug"],
+            "version": project_row["version"],
+            "operation": operation,
+            "changed": {
+                entity: identifiers
+                for entity, identifiers in (changed or {}).items()
+                if identifiers
+            },
+            "writer_warning": self._writer_warning(project_row),
+        }
+
     def create_project(self, slug: str, title: str, objective: str) -> dict[str, Any]:
         if not self.writer_thread_id:
             raise OwnershipError("CODEX_THREAD_ID is required to create a project")
@@ -349,8 +374,14 @@ class WanderStore:
                 """,
                 (project_id, f"Created project: {title}", self.writer_thread_link, now),
             )
+            result = self._mutation_result(
+                connection,
+                project_id,
+                "project.created",
+                {"project_ids": [project_id]},
+            )
             connection.commit()
-        return self.get_project(slug)
+        return result
 
     def list_projects(self, status: str | None = None) -> list[dict[str, Any]]:
         if status is not None and status not in PROJECT_STATUSES:
@@ -467,8 +498,13 @@ class WanderStore:
                 )
             if project_row["owner_thread_id"]:
                 if project_row["owner_thread_id"] == self.writer_thread_id:
+                    result = self._mutation_result(
+                        connection,
+                        project_row["id"],
+                        "project.claimed",
+                    )
                     connection.rollback()
-                    return self.get_project(project)
+                    return result
                 owner_link = f"codex://threads/{project_row['owner_thread_id']}"
                 raise OwnershipError(
                     f"Project '{project_row['slug']}' is already owned by {owner_link}."
@@ -480,8 +516,14 @@ class WanderStore:
                 "Claimed project writer ownership",
                 project_updates={"owner_thread_id": self.writer_thread_id},
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "project.claimed",
+                {"project_ids": [project_row["id"]]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def release_project(
         self,
@@ -500,8 +542,14 @@ class WanderStore:
                 f"Released project writer ownership: {reason}",
                 project_updates={"owner_thread_id": None},
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "project.released",
+                {"project_ids": [project_row["id"]]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def add_project_link(
         self,
@@ -520,6 +568,7 @@ class WanderStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             project_row = self._locked_project(connection, project, expected_version)
+            link_id = str(uuid.uuid4())
             if sequence is None:
                 sequence = connection.execute(
                     "SELECT COALESCE(MAX(sequence), 0) + 10 FROM project_links WHERE project_id = ?",
@@ -533,7 +582,7 @@ class WanderStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        str(uuid.uuid4()),
+                        link_id,
                         project_row["id"],
                         label,
                         url,
@@ -551,8 +600,14 @@ class WanderStore:
                 f"Added project link: {label}",
                 evidence=url,
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "project_link.added",
+                {"project_link_ids": [link_id]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def remove_project_link(
         self,
@@ -579,8 +634,14 @@ class WanderStore:
                 f"Removed project link '{link['label']}': {reason}",
                 evidence=link["url"],
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "project_link.removed",
+                {"project_link_ids": [link_id]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def prepare_github_issue_projection(
         self,
@@ -676,8 +737,14 @@ class WanderStore:
                 "work_item.added",
                 f"Added work item: {title}",
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "work_item.added",
+                {"work_item_ids": [item_id]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def _transition_item(
         self,
@@ -733,7 +800,9 @@ class WanderStore:
                 """,
                 (item_id,),
             ).fetchone()[0]
+            created_link_ids: list[str] = []
             for offset, (url, label) in enumerate(commit_links):
+                link_id = str(uuid.uuid4())
                 try:
                     connection.execute(
                         """
@@ -743,7 +812,7 @@ class WanderStore:
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            str(uuid.uuid4()),
+                            link_id,
                             project_row["id"],
                             item_id,
                             label,
@@ -754,6 +823,7 @@ class WanderStore:
                     )
                 except sqlite3.IntegrityError as error:
                     raise ConflictError(f"Work item commit link already exists: {url}") from error
+                created_link_ids.append(link_id)
             connection.execute(
                 """
                 UPDATE work_items
@@ -769,8 +839,17 @@ class WanderStore:
                 summary,
                 evidence=evidence,
             )
+            changed = {"work_item_ids": [item_id]}
+            if created_link_ids:
+                changed["work_item_link_ids"] = created_link_ids
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                f"work_item.{target_status}",
+                changed,
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def start_work_item(
         self,
@@ -833,6 +912,7 @@ class WanderStore:
                 """,
                 (item_id,),
             ).fetchone()[0]
+            link_id = str(uuid.uuid4())
             try:
                 connection.execute(
                     """
@@ -842,7 +922,7 @@ class WanderStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        str(uuid.uuid4()),
+                        link_id,
                         project_row["id"],
                         item_id,
                         label,
@@ -862,8 +942,14 @@ class WanderStore:
                 f"Attached commit {label} to work item: {item['title']}",
                 evidence=commit_url,
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "work_item_link.added",
+                {"work_item_link_ids": [link_id]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def block_work_item(
         self,
@@ -919,6 +1005,7 @@ class WanderStore:
             connection.execute("BEGIN IMMEDIATE")
             project_row = self._locked_project(connection, project, expected_version)
             now = utc_now()
+            checkpoint_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO checkpoints (
@@ -927,7 +1014,7 @@ class WanderStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(uuid.uuid4()),
+                    checkpoint_id,
                     project_row["id"],
                     current_model,
                     last_decision.strip(),
@@ -948,8 +1035,14 @@ class WanderStore:
                     "current_phase": current_phase,
                 },
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "checkpoint.recorded",
+                {"checkpoint_ids": [checkpoint_id]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def attach_thread(
         self,
@@ -968,6 +1061,7 @@ class WanderStore:
             connection.execute("BEGIN IMMEDIATE")
             project_row = self._locked_project(connection, project, expected_version)
             now = utc_now()
+            candidate_thread_reference_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO thread_references (
@@ -978,16 +1072,36 @@ class WanderStore:
                     role = excluded.role,
                     last_activity = excluded.last_activity
                 """,
-                (str(uuid.uuid4()), project_row["id"], deep_link, title, role, now),
+                (
+                    candidate_thread_reference_id,
+                    project_row["id"],
+                    deep_link,
+                    title,
+                    role,
+                    now,
+                ),
             )
+            thread_reference_row = connection.execute(
+                """
+                SELECT id FROM thread_references
+                WHERE project_id = ? AND deep_link = ?
+                """,
+                (project_row["id"], deep_link),
+            ).fetchone()
             self._advance(
                 connection,
                 project_row,
                 "thread.attached",
                 f"Attached Codex thread: {title}",
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                "thread.attached",
+                {"thread_reference_ids": [thread_reference_row["id"]]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
     def set_project_status(
         self,
@@ -1017,6 +1131,12 @@ class WanderStore:
                 evidence=evidence,
                 project_updates={"status": status, "current_summary": summary},
             )
+            result = self._mutation_result(
+                connection,
+                project_row["id"],
+                f"project.{status}",
+                {"project_ids": [project_row["id"]]},
+            )
             connection.commit()
-        return self.get_project(project)
+        return result
 
