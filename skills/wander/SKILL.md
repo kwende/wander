@@ -5,9 +5,10 @@ description: Create or maintain a durable Wander workboard when the user says "m
 
 # Wander
 
-Use the `wander` MCP server as the authoritative state for a high-level project
-checklist. Keep implementation detail in checkpoints and evidence; keep work
-item titles instantly understandable in the dashboard.
+Use the `wander` MCP server as the authoritative state for a project checklist.
+Keep stable milestones concise, but give active work enough child detail to
+survive distraction and context switching. Keep work-item titles instantly
+understandable in the dashboard.
 
 ## Start or connect a project
 
@@ -27,10 +28,12 @@ item titles instantly understandable in the dashboard.
    If host thread identity is unavailable, ask the user for the copied
    `codex://threads/<thread-id>` link and call `attach_thread`.
 5. Add a small ordered set of semantic work items that communicates what
-   happened, where work is now, and what remains. Prefer roughly 3-7 items; use
-   more only when the user needs the additional milestones.
-6. Start the item that represents the actual current activity. Do not mark an
-   item complete without concrete evidence.
+   happened, where work is now, and what remains. Prefer roughly 3-7 top-level
+   milestones; use more only when the user needs them.
+6. Start the item that represents the actual current activity. If it has two or
+   more known steps that can be executed or verified independently, add them as
+   children so the active path is resumable. Do not mark an item complete
+   without concrete evidence.
 
 After setup, give the user these local dashboard forms when the web server is
 available:
@@ -61,6 +64,14 @@ may differ), treat it as an identity pointer rather than sufficient context:
   intended update still makes sense.
 - Surface a non-empty `writer_warning`, but continue when the requested write
   is still appropriate. It is a workflow bumper, not an authorization failure.
+- Favor resumability over brevity on the active path. Add child work items just
+  in time when steps become independently startable, completable, verifiable,
+  blockable, delegable, or returnable. The deepest active child should describe
+  the user's current focus; its parents provide purpose and its siblings show
+  what comes next.
+- Do not pre-expand speculative future work or command-by-command mechanics.
+  Checkpoints preserve causal context and invariants, but do not replace the
+  visible checklist of current execution steps.
 - Update work-item state after meaningful progress. Record a checkpoint at a
   semantic stopping point, context switch, important decision, blocker, or
   handoff—not after every minor edit.
@@ -70,8 +81,9 @@ may differ), treat it as an identity pointer rather than sufficient context:
   or require them for research, planning, operational, or other non-code work.
   If a commit is discovered later, attach it with `add_work_item_link`.
 - If the plan changes, add or abandon items while preserving their history.
-- Keep the dashboard concise. Put causal detail, invariants, open questions,
-  and the best resume point in the checkpoint rather than work-item titles.
+- Keep completed work and future milestones concise. Put causal detail,
+  invariants, open questions, and the best resume point in the checkpoint
+  rather than work-item titles.
 
 ## Project progress into GitHub issues
 

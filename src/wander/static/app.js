@@ -91,6 +91,61 @@ function renderEmpty(title, detail = "") {
     </section>`;
 }
 
+function buildWorkItemHierarchy(workItems) {
+  const itemsById = new Map(workItems.map((item) => [item.id, item]));
+  const childrenByParent = new Map();
+  for (const item of workItems) {
+    if (!item.parent_id || item.status === "abandoned") continue;
+    const children = childrenByParent.get(item.parent_id) || [];
+    children.push(item);
+    childrenByParent.set(item.parent_id, children);
+  }
+
+  const referencedAncestors = new Set();
+  let referencedItem = itemsById.get(requestedItem);
+  while (referencedItem?.parent_id) {
+    referencedAncestors.add(referencedItem.parent_id);
+    referencedItem = itemsById.get(referencedItem.parent_id);
+  }
+
+  return { childrenByParent, referencedAncestors };
+}
+
+function renderSubtaskList(project, parentId, hierarchy) {
+  const checklist = document.createElement("ul");
+  checklist.className = "subtask-list";
+  for (const child of hierarchy.childrenByParent.get(parentId) || []) {
+    const checklistItem = document.createElement("li");
+    checklistItem.dataset.status = child.status;
+    if (child.id === requestedItem) {
+      checklistItem.dataset.referenced = "true";
+      checklistItem.setAttribute("aria-current", "true");
+    }
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.disabled = true;
+    checkbox.checked = child.status === "complete";
+    checkbox.setAttribute("aria-label", `${child.title}: ${child.status}`);
+    const label = document.createElement("span");
+    label.className = "subtask-title";
+    label.textContent = child.title;
+    checklistItem.append(checkbox, label);
+    if (isLocalAuthoringView) {
+      checklistItem.appendChild(createCodexLink(project, child));
+    }
+
+    const hasChildren = hierarchy.childrenByParent.has(child.id);
+    const shouldExpand = ["active", "blocked"].includes(child.status)
+      || hierarchy.referencedAncestors.has(child.id);
+    if (hasChildren && shouldExpand) {
+      checklistItem.appendChild(renderSubtaskList(project, child.id, hierarchy));
+    }
+    checklist.appendChild(checklistItem);
+  }
+  return checklist;
+}
+
 function renderProject(project) {
   const fragment = template.content.cloneNode(true);
   const hero = fragment.querySelector(".hero");
@@ -125,6 +180,7 @@ function renderProject(project) {
   }
 
   const topLevelItems = project.work_items.filter((item) => !item.parent_id);
+  const hierarchy = buildWorkItemHierarchy(project.work_items);
   const relevantItems = topLevelItems.filter((item) => item.status !== "abandoned");
   const completed = relevantItems.filter((item) => item.status === "complete").length;
   const progress = relevantItems.length ? Math.round((completed / relevantItems.length) * 100) : 0;
@@ -156,32 +212,11 @@ function renderProject(project) {
         element.appendChild(createCodexLink(project, item));
       }
 
-      const children = project.work_items.filter(
-        (candidate) => candidate.parent_id === item.id && candidate.status !== "abandoned",
-      );
-      const referencesChild = children.some((child) => child.id === requestedItem);
-      if ((["active", "blocked"].includes(item.status) || referencesChild) && children.length) {
-        const checklist = document.createElement("ul");
-        checklist.className = "subtask-list";
-        for (const child of children) {
-          const checklistItem = document.createElement("li");
-          if (child.id === requestedItem) {
-            checklistItem.dataset.referenced = "true";
-            checklistItem.setAttribute("aria-current", "true");
-          }
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.disabled = true;
-          checkbox.checked = child.status === "complete";
-          const label = document.createElement("span");
-          label.textContent = child.title;
-          checklistItem.append(checkbox, label);
-          if (isLocalAuthoringView) {
-            checklistItem.appendChild(createCodexLink(project, child));
-          }
-          checklist.appendChild(checklistItem);
-        }
-        element.querySelector("div").appendChild(checklist);
+      const hasChildren = hierarchy.childrenByParent.has(item.id);
+      const shouldExpand = ["active", "blocked"].includes(item.status)
+        || hierarchy.referencedAncestors.has(item.id);
+      if (hasChildren && shouldExpand) {
+        element.querySelector("div").appendChild(renderSubtaskList(project, item.id, hierarchy));
       }
 
       if (item.links?.length) {
@@ -231,20 +266,26 @@ async function fetchJson(url) {
 async function loadProjects(preferredSlug = select.value) {
   try {
     const projects = await fetchJson("/api/projects");
-    if (!projects.length) {
+    const visibleProjects = projects.filter(
+      (project) => !["completed", "archived"].includes(project.status),
+    );
+    if (!visibleProjects.length) {
       select.replaceChildren();
-      renderEmpty("No projects yet", "Ask Codex to create the first project through Wander's MCP tools.");
+      renderEmpty(
+        "No current projects",
+        "Completed projects remain safely stored in Wander's history.",
+      );
       return;
     }
-    select.replaceChildren(...projects.map((project) => {
+    select.replaceChildren(...visibleProjects.map((project) => {
       const option = document.createElement("option");
       option.value = project.slug;
       option.textContent = `${project.title} · ${project.status}`;
       return option;
     }));
-    const selected = projects.some((project) => project.slug === preferredSlug)
+    const selected = visibleProjects.some((project) => project.slug === preferredSlug)
       ? preferredSlug
-      : projects[0].slug;
+      : visibleProjects[0].slug;
     select.value = selected;
     await loadProject(selected);
   } catch (error) {

@@ -90,6 +90,58 @@ Python, MCP entry point, and skill destination without changing the machine.
   the target conversation's identity. Read the target command environment's
   `CODEX_THREAD_ID` or `CODEX_SESSION_ID` instead.
 
+## Active-work detail and resumability
+
+Keep the project's stable milestone list concise, but optimize the active work
+path for interruption recovery rather than brevity. When an active item has two
+or more known steps that can be started, completed, verified, blocked,
+delegated, or returned to independently, add those steps as child work items.
+
+Build this checklist just in time as the execution path becomes known. Do not
+pre-expand speculative future work or record command-by-command mechanics. The
+deepest active child should communicate the user's present focus, while its
+parents explain why that work matters and its siblings show where to return
+next. A checkpoint preserves causal context, decisions, and invariants; it is
+not a substitute for the visible checklist of current execution steps.
+
+Completed work and future milestones may remain compact. Add detail when it is
+needed to survive distraction, context switching, delegation, or a handoff.
+
+## Information-model feedback
+
+Wander is experimental infrastructure. While using it, notice when missing
+structured context causes repeated repository scans, long chat-history
+reconstruction, avoidable tool calls, assumptions, or ambiguous handoffs. At a
+useful stopping point, briefly suggest additional information that Wander could
+store or expose when doing so would materially reduce token cost, latency, or
+future investigative work.
+
+Keep this feedback bounded:
+
+- Do not interrupt the current engineering task merely to redesign Wander.
+- Do not add database columns, tables, MCP tools, or dashboard behavior without
+  explicit authorization. A recommendation is not implementation approval.
+- Recommend structured storage only for information that is recurring,
+  queryable, and useful across sessions. Keep one-off narrative in checkpoints,
+  evidence, notes, or links.
+- Prefer references, hashes, result paths, and compact summaries over copying
+  large logs or source artifacts into SQLite.
+- Distinguish a database-model gap from a skill, workflow, or presentation gap;
+  recommend the smallest layer that removes the observed friction.
+
+A useful recommendation states:
+
+1. What the agent had to reconstruct or infer.
+2. What evidence showed the cost was recurring or material.
+3. The smallest field, relationship, semantic tool, or derived view that would
+   remove that cost.
+4. How the data would be populated, refreshed, and kept authoritative.
+5. Any migration, staleness, privacy, or ledger-bloat risk.
+
+If the existing Wander model was sufficient, say so when the user is evaluating
+the tool. Do not invent optimization work merely because this feedback path
+exists.
+
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint
 containing the current model, last decision, invariants, open questions, and
