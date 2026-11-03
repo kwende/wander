@@ -41,6 +41,7 @@ mcp = MCPServer(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
         "Identify the current Codex thread before the first mutation. "
         "Pass the last-read project version to every mutation. Record evidence before completion. "
+        "Mutation results are compact deltas; chain writes with their returned version. "
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
     ),
 )

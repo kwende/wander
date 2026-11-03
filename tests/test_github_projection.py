@@ -54,7 +54,7 @@ class GitHubProjectionTests(unittest.TestCase):
             self.project["version"],
             "Implement projection",
         )
-        parent_id = self.project["work_items"][0]["id"]
+        parent_id = self.project["changed"]["work_item_ids"][0]
         self.project = self.store.add_work_item(
             "wander",
             self.project["version"],
@@ -72,11 +72,7 @@ class GitHubProjectionTests(unittest.TestCase):
             self.project["version"],
             "Document ownership",
         )
-        document_id = next(
-            item["id"]
-            for item in self.project["work_items"]
-            if item["title"] == "Document ownership"
-        )
+        document_id = self.project["changed"]["work_item_ids"][0]
         self.project = self.store.start_work_item(
             "wander",
             document_id,
@@ -99,11 +95,7 @@ class GitHubProjectionTests(unittest.TestCase):
             self.project["version"],
             "Import GitHub checkboxes",
         )
-        abandoned_id = next(
-            item["id"]
-            for item in self.project["work_items"]
-            if item["title"] == "Import GitHub checkboxes"
-        )
+        abandoned_id = self.project["changed"]["work_item_ids"][0]
         self.project = self.store.abandon_work_item(
             "wander",
             abandoned_id,
@@ -147,11 +139,12 @@ class GitHubProjectionTests(unittest.TestCase):
             "https://github.com/kwende/wander/issues/1#issuecomment-123",
         )
         projection = self.store.prepare_github_issue_projection("wander")
+        state = self.store.get_project("wander")
 
         self.assertEqual("update", projection["operation"])
         self.assertEqual(123, projection["comment"]["comment_id"])
-        self.assertEqual("Wander GitHub projection", self.project["links"][1]["label"])
-        self.assertEqual("project_link.added", self.project["recent_events"][0]["operation"])
+        self.assertEqual("Wander GitHub projection", state["links"][1]["label"])
+        self.assertEqual("project_link.added", state["recent_events"][0]["operation"])
 
         with self.assertRaisesRegex(ConflictError, "already has"):
             self.store.register_github_projection_comment(

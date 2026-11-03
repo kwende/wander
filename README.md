@@ -109,6 +109,21 @@ Every mutation:
 3. Advances the project version.
 4. Adds an append-only provenance event.
 
+Mutation tools return a compact delta rather than the full project read model:
+
+```json
+{
+  "project": "camera-reboot",
+  "version": 3,
+  "operation": "work_item.active",
+  "changed": {"work_item_ids": ["..."]},
+  "writer_warning": ""
+}
+```
+
+Use the returned `version` to chain the next mutation. Call `get_project` only
+when the full ledger is needed; use `get_resume_context` for normal resumption.
+
 A stale chat receives a conflict instead of overwriting newer work. Work-item
 and project completion require evidence. A parent work item cannot complete
 until each child is complete or abandoned.
