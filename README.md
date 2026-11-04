@@ -2,7 +2,14 @@
 
 Wander is a durable, multi-thread workboard for Codex journeys. SQLite is the
 authoritative state. Codex mutates that state through semantic MCP tools; the
-network dashboard is deliberately read-only.
+network Journey dashboard is deliberately read-only. The same application has
+a localhost-only modal for human-controlled Jaunts: independent lightweight
+tasks with free-form notes and retained history.
+
+Wander also names user-requested nuggets of retained knowledge **Mathoms**.
+Mathoms are stored only in Hippo, attributed to the `wander` source system, and
+accessed through Wander's MCP tools. They are not part of the SQLite journey
+ledger and the dashboard has no Mathom write interface.
 
 ## Run locally
 
@@ -15,8 +22,9 @@ Set-Location D:\repos\wander
 The dashboard listens on all network interfaces at port `8765`. Open
 `http://localhost:8765` on this machine or `http://<host-ip>:8765` from another
 machine on the same reachable network. Windows Firewall may require an inbound
-rule. Anyone who can reach the port can read the journey notes; no HTTP write
-surface exists.
+rule. Anyone who can reach the port can read the Journey notes. Jaunt reads and
+writes require a loopback TCP peer; LAN clients receive `403` even if they know
+the Jaunt API path.
 
 The server advertises its preferred LAN IPv4 address to the Share action, so a
 link copied from `localhost` remains reachable from another machine. On a VPN or
@@ -58,6 +66,12 @@ Work explicitly removed from the plan uses the existing `abandoned` state. The
 dashboard renders it with a yellow × to distinguish “decided not to do” from a
 red blocked or failed-looking condition.
 
+Jaunts open in a separate modal on the local dashboard. A user can create,
+edit, complete, reopen, and inspect their history without changing the selected
+Journey. Agents have equivalent semantic MCP tools. Jaunts have independent
+versions and no Journey relationship; promotion is a separate capability and
+must never be simulated by creating a labeled Journey.
+
 The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
 setting up the environment so the repository MCP registry is rediscovered.
 
@@ -81,6 +95,24 @@ host-provided conversation identity, and builds the high-level work-item
 sequence. The identity is passed explicitly because a globally launched MCP
 process does not necessarily inherit the calling thread's environment.
 
+To enable Mathom tools, configure the Hippo MCP endpoint and the dedicated
+Wander credential before starting Codex:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "WANDER_HIPPO_URL",
+    "http://localhost:8787/mcp",
+    "User")
+[Environment]::SetEnvironmentVariable(
+    "WANDER_HIPPO_TOKEN",
+    "<the Hippo Wander-client token>",
+    "User")
+```
+
+`save_mathom` may be called only after an explicit user request to preserve the
+specific knowledge. `search_mathoms` searches or lists only Hippo records whose
+source system is `wander`. Restart Codex after changing either variable.
+
 The repository is also a local Agent Plugin package. Its manifest is
 `plugin.json`, its MCP declaration is `mcp.json`, and its packaged skill is in
 `skills/wander/`. `.agents/plugins/marketplace.json` makes that package
@@ -99,10 +131,12 @@ expose duplicate integrations backed by the same Wander database.
 ## State model
 
 ```text
-Codex chats --semantic MCP tools--> SQLite <--GET only-- dashboard
+Codex chats --semantic MCP tools--> SQLite <--GET Journeys-- network dashboard
+                                      ^
+                                      +-- localhost Jaunt modal
 ```
 
-Every mutation:
+Every Journey mutation after creation:
 
 1. Requires the journey version last read by the caller.
 2. Runs in a SQLite `BEGIN IMMEDIATE` transaction.
@@ -123,6 +157,11 @@ Mutation tools return a compact delta rather than the full journey read model:
 
 Use the returned `version` to chain the next mutation. Call `get_journey` only
 when the full ledger is needed; use `get_resume_context` for normal resumption.
+
+Jaunts use the same optimistic-concurrency principle but maintain their own
+version and event stream. Use `list_jaunts`/`get_jaunt` for reads and
+`create_jaunt`, `update_jaunt`, `complete_jaunt`, or `reopen_jaunt` for explicit
+operations. Creating or changing a Jaunt never advances a Journey version.
 
 A stale chat receives a conflict instead of overwriting newer work. Work-item
 and journey completion require evidence. A parent work item cannot complete

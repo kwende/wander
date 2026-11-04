@@ -3,6 +3,24 @@ const selectLabel = document.querySelector("#journey-select-label");
 const refreshButton = document.querySelector("#refresh-button");
 const dashboard = document.querySelector("#dashboard");
 const template = document.querySelector("#journey-template");
+const jauntsButton = document.querySelector("#jaunts-button");
+const jauntsDialog = document.querySelector("#jaunts-dialog");
+const jauntsClose = document.querySelector("#jaunts-close");
+const jauntsRefresh = document.querySelector("#jaunts-refresh");
+const jauntsShowCompleted = document.querySelector("#jaunts-show-completed");
+const jauntsList = document.querySelector("#jaunts-list");
+const jauntNew = document.querySelector("#jaunt-new");
+const jauntForm = document.querySelector("#jaunt-form");
+const jauntTitle = document.querySelector("#jaunt-title");
+const jauntNotes = document.querySelector("#jaunt-notes");
+const jauntStatus = document.querySelector("#jaunt-status");
+const jauntUpdated = document.querySelector("#jaunt-updated");
+const jauntMessage = document.querySelector("#jaunt-message");
+const jauntSave = document.querySelector("#jaunt-save");
+const jauntComplete = document.querySelector("#jaunt-complete");
+const jauntReopen = document.querySelector("#jaunt-reopen");
+const jauntHistorySection = document.querySelector("#jaunt-history-section");
+const jauntHistory = document.querySelector("#jaunt-history");
 const query = new URLSearchParams(window.location.search);
 const requestedJourney = query.get("journey") || query.get("project");
 const requestedItem = query.get("item");
@@ -10,6 +28,8 @@ const sharedJourney = query.get("shared") === "1" ? requestedJourney : null;
 const localAuthoringHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const isLocalAuthoringView = !sharedJourney && localAuthoringHosts.has(window.location.hostname);
 let shareBaseUrl = window.location.origin;
+let loadedJaunts = [];
+let selectedJaunt = null;
 
 const markers = {
   pending: "○",
@@ -254,13 +274,176 @@ function renderJourney(journey) {
   dashboard.replaceChildren(fragment);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, { cache: "no-store", ...options });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({ error: response.statusText }));
     throw new Error(detail.error || response.statusText);
   }
   return response.json();
+}
+
+function resetJauntEditor() {
+  selectedJaunt = null;
+  jauntForm.reset();
+  jauntTitle.readOnly = false;
+  jauntNotes.readOnly = false;
+  jauntStatus.textContent = "New";
+  jauntStatus.dataset.status = "new";
+  jauntUpdated.textContent = "";
+  jauntMessage.textContent = "";
+  jauntSave.textContent = "Create Jaunt";
+  jauntSave.hidden = false;
+  jauntComplete.hidden = true;
+  jauntReopen.hidden = true;
+  jauntHistorySection.hidden = true;
+  for (const item of jauntsList.querySelectorAll("[aria-current='true']")) {
+    item.removeAttribute("aria-current");
+  }
+  jauntTitle.focus();
+}
+
+function renderJauntHistory(history) {
+  jauntHistory.replaceChildren();
+  for (const event of history || []) {
+    const entry = document.createElement("div");
+    entry.className = "jaunt-history-entry";
+    const summary = document.createElement("strong");
+    summary.textContent = event.summary;
+    const meta = document.createElement("span");
+    meta.textContent = `${event.operation} · ${formatDate(event.created_at)}`;
+    entry.append(summary, meta);
+    jauntHistory.appendChild(entry);
+  }
+  jauntHistorySection.hidden = !(history || []).length;
+}
+
+function populateJauntEditor(jaunt) {
+  selectedJaunt = jaunt;
+  jauntTitle.value = jaunt.title;
+  jauntNotes.value = jaunt.notes;
+  jauntStatus.textContent = jaunt.status;
+  jauntStatus.dataset.status = jaunt.status;
+  jauntUpdated.textContent = `Updated ${formatDate(jaunt.updated_at)}`;
+  jauntMessage.textContent = "";
+  const editable = jaunt.status === "open";
+  jauntTitle.readOnly = !editable;
+  jauntNotes.readOnly = !editable;
+  jauntSave.textContent = "Save";
+  jauntSave.hidden = !editable;
+  jauntComplete.hidden = !editable;
+  jauntReopen.hidden = jaunt.status !== "completed";
+  renderJauntHistory(jaunt.history);
+}
+
+async function selectJaunt(jauntId) {
+  try {
+    const jaunt = await fetchJson(`/api/jaunts/${encodeURIComponent(jauntId)}`);
+    populateJauntEditor(jaunt);
+    for (const item of jauntsList.querySelectorAll(".jaunt-list-item")) {
+      if (item.dataset.jauntId === jauntId) item.setAttribute("aria-current", "true");
+      else item.removeAttribute("aria-current");
+    }
+  } catch (error) {
+    jauntMessage.textContent = error.message;
+  }
+}
+
+function renderJauntList() {
+  jauntsList.replaceChildren();
+  const visible = loadedJaunts.filter(
+    (jaunt) => jaunt.status === "open" || jauntsShowCompleted.checked,
+  );
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "jaunts-empty";
+    empty.textContent = "No active Jaunts.";
+    jauntsList.appendChild(empty);
+    return;
+  }
+  for (const jaunt of visible) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "jaunt-list-item";
+    item.dataset.jauntId = jaunt.id;
+    item.dataset.status = jaunt.status;
+    if (selectedJaunt?.id === jaunt.id) item.setAttribute("aria-current", "true");
+    const title = document.createElement("strong");
+    title.textContent = jaunt.title;
+    const preview = document.createElement("span");
+    preview.textContent = jaunt.notes.trim().split(/\r?\n/, 1)[0] || jaunt.status;
+    const updated = document.createElement("small");
+    updated.textContent = formatDate(jaunt.updated_at);
+    item.append(title, preview, updated);
+    item.addEventListener("click", () => selectJaunt(jaunt.id));
+    jauntsList.appendChild(item);
+  }
+}
+
+async function loadJaunts(preferredId = selectedJaunt?.id) {
+  try {
+    loadedJaunts = await fetchJson("/api/jaunts");
+    jauntMessage.textContent = "";
+    renderJauntList();
+    if (preferredId && loadedJaunts.some((jaunt) => jaunt.id === preferredId)) {
+      await selectJaunt(preferredId);
+    } else if (!selectedJaunt && loadedJaunts.some((jaunt) => jaunt.status === "open")) {
+      await selectJaunt(loadedJaunts.find((jaunt) => jaunt.status === "open").id);
+    } else if (selectedJaunt && !loadedJaunts.some((jaunt) => jaunt.id === selectedJaunt.id)) {
+      resetJauntEditor();
+    }
+  } catch (error) {
+    jauntMessage.textContent = error.message;
+  }
+}
+
+async function saveJaunt(event) {
+  event.preventDefault();
+  const title = jauntTitle.value;
+  const notes = jauntNotes.value;
+  try {
+    let saved;
+    if (selectedJaunt) {
+      if (title === selectedJaunt.title && notes === selectedJaunt.notes) {
+        jauntMessage.textContent = "No changes to save.";
+        return;
+      }
+      saved = await fetchJson(`/api/jaunts/${encodeURIComponent(selectedJaunt.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_version: selectedJaunt.version, title, notes }),
+      });
+    } else {
+      saved = await fetchJson("/api/jaunts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, notes }),
+      });
+    }
+    populateJauntEditor(saved);
+    jauntMessage.textContent = "Saved.";
+    await loadJaunts(saved.id);
+  } catch (error) {
+    jauntMessage.textContent = error.message;
+  }
+}
+
+async function transitionJaunt(action) {
+  if (!selectedJaunt) return;
+  try {
+    const changed = await fetchJson(
+      `/api/jaunts/${encodeURIComponent(selectedJaunt.id)}/${action}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_version: selectedJaunt.version }),
+      },
+    );
+    populateJauntEditor(changed);
+    await loadJaunts(changed.id);
+  } catch (error) {
+    jauntMessage.textContent = error.message;
+  }
 }
 
 async function loadJourneys(preferredSlug = select.value) {
@@ -315,9 +498,21 @@ refreshButton.addEventListener("click", () => {
   if (sharedJourney) loadJourney(sharedJourney);
   else loadJourneys(select.value);
 });
+jauntsButton.addEventListener("click", async () => {
+  jauntsDialog.showModal();
+  await loadJaunts();
+});
+jauntsClose.addEventListener("click", () => jauntsDialog.close());
+jauntsRefresh.addEventListener("click", () => loadJaunts());
+jauntsShowCompleted.addEventListener("change", renderJauntList);
+jauntNew.addEventListener("click", resetJauntEditor);
+jauntForm.addEventListener("submit", saveJaunt);
+jauntComplete.addEventListener("click", () => transitionJaunt("complete"));
+jauntReopen.addEventListener("click", () => transitionJaunt("reopen"));
 
 async function initialize() {
   await loadConfiguration();
+  jauntsButton.hidden = !isLocalAuthoringView;
   if (sharedJourney) {
     select.hidden = true;
     selectLabel.hidden = true;

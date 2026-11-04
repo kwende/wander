@@ -556,7 +556,7 @@ class WanderStoreTests(unittest.TestCase):
             self.assertIn("journey_id", work_item_columns)
             self.assertNotIn("project_id", work_item_columns)
             self.assertEqual([], connection.execute("PRAGMA foreign_key_check").fetchall())
-            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
 
 
 if __name__ == "__main__":

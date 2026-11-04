@@ -24,10 +24,12 @@ Windows machine, use this contract instead of reconstructing the installation:
    and the installed skill contains `SKILL.md`.
 5. Tell the user to restart Codex. Registration changes do not become reliable
    in an already-running Codex process.
-6. Start the read-only dashboard separately with
-   `& .\scripts\start-web.ps1`. Verify `/api/health` reports `mode: read-only`
-   and a reachable `share_base_url`. If multi-NIC detection selects the wrong
-   adapter, restart with `-ShareBaseUrl 'http://<reachable-ip>:8765'`.
+6. Start the dashboard separately with `& .\scripts\start-web.ps1`. Verify
+   `/api/health` reports `mode: read-only`, `jaunts_mode: local-authoring` from
+   localhost, and a reachable `share_base_url`. Journey HTTP state remains
+   read-only; the local Jaunts modal is the one human-authoring exception. If
+   multi-NIC detection selects the wrong adapter, restart with
+   `-ShareBaseUrl 'http://<reachable-ip>:8765'`.
 7. After Codex restarts, call Wander `list_journeys` and then create or resume
    the requested journey. Do not claim installation succeeded merely because
    the Python package installed.
@@ -47,10 +49,27 @@ Python, MCP entry point, and skill destination without changing the machine.
 ## Runtime invariants
 
 - SQLite is the source of truth.
-- The HTTP dashboard is read-only. Do not add mutation routes.
-- State changes use semantic MCP tools rather than generic SQL or CRUD tools.
-- Every mutation requires `expected_version`, advances the journey version, and
-  appends a provenance event in the same transaction.
+- Journey HTTP state is read-only. The localhost-only Jaunts modal may use its
+  narrow semantic Jaunt routes; do not add generic HTTP mutation routes or make
+  Jaunts readable from a non-loopback peer.
+- Agent state changes use semantic MCP tools rather than generic SQL or CRUD
+  tools. The local Jaunts modal is a human-controlled authoring surface.
+- A Jaunt is a standalone lightweight task with free-form notes and its own
+  version/history. It has no Journey relationship unless a future explicit
+  promotion operation records one. Never emulate a Jaunt with a labeled
+  Journey or emulate promotion by creating a Journey independently.
+- Create a Jaunt through MCP only when the user explicitly asks. Read the Jaunt
+  before editing, completing, or reopening it, and pass its last-read version.
+- Mathoms are request-only knowledge retained in Hippo with `source_system` set
+  to `wander`. Never save a Mathom without an explicit user request concerning
+  the specific knowledge. Do not infer permission from novelty, usefulness,
+  completed work, or a prior request to save something else.
+- Hippo is authoritative for Mathom storage. Do not add a parallel Mathom table
+  to Wander's SQLite ledger or expose an HTTP mutation route for Mathoms.
+- Every Journey mutation after creation requires `expected_version`, advances
+  the Journey version, and appends a provenance event in the same transaction.
+  Every Jaunt mutation after creation uses the independent Jaunt version and
+  appends a Jaunt event atomically.
 - Completion requires concrete evidence.
 - A parent work item cannot complete while any child is pending, active, or
   blocked. Active and blocked parents expose their children as the dashboard's

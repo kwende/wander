@@ -1,13 +1,13 @@
 interface:
   display_name: "Wander"
-  short_description: "Track ongoing work in a durable visual checklist"
-  default_prompt: "Use $wander to create a durable workboard for this task."
+  short_description: "Track durable Journeys and quick Jaunts"
+  default_prompt: "Use $wander to create a Journey or manage my lightweight Jaunts."
 
 dependencies:
   tools:
     - type: "mcp"
       value: "wander"
-      description: "Durable Wander journey and work-item ledger"
+      description: "Durable Wander Journey and Jaunt ledger"
       transport: "stdio"
 
 policy:

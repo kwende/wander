@@ -1,6 +1,6 @@
 ---
 name: wander
-description: Create or maintain a durable Wander workboard when the user says "make a Wander," asks to track a task in Wander, wants a high-level visual checklist that survives across turns, or supplies a Wander Codex link containing journey and item query parameters. Do not activate for ordinary one-off tasks unless the user explicitly asks for Wander.
+description: Create or maintain a durable Wander workboard when the user says "make a Wander," asks to track a task in Wander, wants a high-level visual checklist that survives across turns, supplies a Wander Codex link containing journey and item query parameters, or explicitly asks to add or manage a Jaunt. Do not activate for ordinary one-off tasks unless the user explicitly asks for Wander or a Jaunt.
 ---
 
 # Wander
@@ -85,6 +85,31 @@ may differ), treat it as an identity pointer rather than sufficient context:
   invariants, open questions, and the best resume point in the checkpoint
   rather than work-item titles.
 
+## Manage Jaunts
+
+A Jaunt is an independent, lightweight task with a title, one free-form notes
+field, retained history, and an open/completed lifecycle. It is not part of a
+Journey and does not use Journey work items, checkpoints, ownership, or GitHub
+projection.
+
+- Create a Jaunt only when the user explicitly asks to add or create one. Do
+  not turn ordinary side work into a Jaunt merely because it is small.
+- Before the first Jaunt mutation, identify the current Codex thread through
+  the same supported host identity process used for Journeys so event
+  provenance is retained.
+- Use `list_jaunts` to discover Jaunts and `get_jaunt` to read the selected
+  Jaunt and its current version before mutation.
+- Use `create_jaunt`, `update_jaunt`, `complete_jaunt`, and `reopen_jaunt` for
+  their named lifecycle operations. Pass the last-read or last-returned Jaunt
+  version to every mutation after creation.
+- Preserve the user's loose notes rather than restructuring them into Journey
+  fields. Completing a Jaunt retains its notes and history; reopening makes it
+  editable again.
+- Never create a Journey labeled as a Jaunt. Jaunt-to-Journey promotion is a
+  distinct operation and must not be simulated when no promotion tool exists.
+- The human Jaunts modal is available only from localhost. This HTTP boundary
+  does not prohibit agents from using the semantic MCP tools.
+
 ## Journey progress into GitHub issues
 
 Wander is always the source of truth. GitHub issue checkboxes are a one-way
@@ -124,4 +149,19 @@ Wander.
 
 Wander supplements the repository and chat; it does not authorize unrelated
 source changes, deployment, publication, or other external side effects.
+
+## Request-only Mathoms
+
+A Mathom is Wander's name for a nugget of knowledge stored in Hippo with
+`sourceSystem` fixed to `wander`. Hippo remains the authoritative store; do not
+copy Mathoms into Wander's SQLite journey ledger.
+
+- Call `save_mathom` only after the user explicitly asks to preserve the
+  specific knowledge in the current conversation.
+- Never treat usefulness, novelty, a completed Journey or Jaunt, or a previous
+  request to save different knowledge as standing permission.
+- Ask for clarification before saving when the claim, confidence, provenance,
+  or intended scope is ambiguous.
+- `search_mathoms` is read-only and does not authorize a later save.
+- Do not narrate an unrequested save because unrequested saves are prohibited.
 

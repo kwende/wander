@@ -32,6 +32,12 @@ ITEM_TRANSITIONS = {
     "complete": set(),
     "abandoned": set(),
 }
+JAUNT_STATUSES = {"open", "completed", "promoted"}
+JAUNT_TRANSITIONS = {
+    "open": {"completed", "promoted"},
+    "completed": {"open", "promoted"},
+    "promoted": set(),
+}
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
@@ -198,6 +204,38 @@ class WanderStore:
 
                 CREATE INDEX IF NOT EXISTS ix_events_journey_id
                     ON events(journey_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS jaunts (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL CHECK (status IN ('open', 'completed', 'promoted')),
+                    promoted_journey_id TEXT REFERENCES journeys(id),
+                    version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_jaunts_status_updated
+                    ON jaunts(status, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS jaunt_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    jaunt_id TEXT NOT NULL REFERENCES jaunts(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL,
+                    before_version INTEGER NOT NULL,
+                    after_version INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    title_snapshot TEXT NOT NULL,
+                    notes_snapshot TEXT NOT NULL,
+                    status_snapshot TEXT NOT NULL,
+                    source_thread TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_jaunt_events_jaunt_id
+                    ON jaunt_events(jaunt_id, id DESC);
                 """
             )
             journey_columns = {
@@ -206,7 +244,8 @@ class WanderStore:
             }
             if "owner_thread_id" not in journey_columns:
                 connection.execute("ALTER TABLE journeys ADD COLUMN owner_thread_id TEXT")
-            connection.execute("PRAGMA user_version = 2")
+            self._migrate_jaunt_schema(connection)
+            connection.execute("PRAGMA user_version = 4")
             connection.commit()
 
     @staticmethod
@@ -266,6 +305,31 @@ class WanderStore:
         if foreign_key_errors:
             raise ConflictError("Journey schema migration produced invalid foreign keys")
 
+    @classmethod
+    def _migrate_jaunt_schema(cls, connection: sqlite3.Connection) -> None:
+        if not cls._table_exists(connection, "jaunts"):
+            return
+
+        jaunt_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(jaunts)").fetchall()
+        }
+        if "promoted_journey_id" not in jaunt_columns:
+            connection.execute(
+                "ALTER TABLE jaunts ADD COLUMN promoted_journey_id TEXT REFERENCES journeys(id)"
+            )
+
+        if not cls._table_exists(connection, "jaunt_events"):
+            return
+        event_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(jaunt_events)").fetchall()
+        }
+        for column in ("title_snapshot", "notes_snapshot", "status_snapshot"):
+            if column not in event_columns:
+                connection.execute(
+                    f"ALTER TABLE jaunt_events ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                )
+
     @staticmethod
     def _required(value: str, field: str) -> str:
         normalized = value.strip()
@@ -317,6 +381,29 @@ class WanderStore:
         if row["version"] != expected_version:
             raise ConflictError(
                 f"Stale journey version for {row['slug']}: expected {expected_version}, "
+                f"current {row['version']}. Reload and reconcile before writing."
+            )
+        return row
+
+    def _jaunt_row(self, connection: sqlite3.Connection, jaunt_id: str) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM jaunts WHERE id = ?",
+            (jaunt_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"Jaunt not found: {jaunt_id}")
+        return row
+
+    def _locked_jaunt(
+        self,
+        connection: sqlite3.Connection,
+        jaunt_id: str,
+        expected_version: int,
+    ) -> sqlite3.Row:
+        row = self._jaunt_row(connection, jaunt_id)
+        if row["version"] != expected_version:
+            raise ConflictError(
+                f"Stale jaunt version for {jaunt_id}: expected {expected_version}, "
                 f"current {row['version']}. Reload and reconcile before writing."
             )
         return row
@@ -400,6 +487,210 @@ class WanderStore:
             },
             "writer_warning": self._writer_warning(journey_row),
         }
+
+    def _advance_jaunt(
+        self,
+        connection: sqlite3.Connection,
+        jaunt_row: sqlite3.Row,
+        operation: str,
+        summary: str,
+        updates: dict[str, Any] | None = None,
+    ) -> int:
+        before_version = jaunt_row["version"]
+        after_version = before_version + 1
+        now = utc_now()
+        next_values = {"version": after_version, "updated_at": now}
+        next_values.update(updates or {})
+        title_snapshot = next_values.get("title", jaunt_row["title"])
+        notes_snapshot = next_values.get("notes", jaunt_row["notes"])
+        status_snapshot = next_values.get("status", jaunt_row["status"])
+        set_clause = ", ".join(f"{name} = ?" for name in next_values)
+        connection.execute(
+            f"UPDATE jaunts SET {set_clause} WHERE id = ?",  # noqa: S608 - column names are internal constants
+            (*next_values.values(), jaunt_row["id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO jaunt_events (
+                jaunt_id, operation, before_version, after_version,
+                summary, title_snapshot, notes_snapshot, status_snapshot,
+                source_thread, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                jaunt_row["id"],
+                operation,
+                before_version,
+                after_version,
+                summary.strip(),
+                title_snapshot,
+                notes_snapshot,
+                status_snapshot,
+                self.writer_thread_link,
+                now,
+            ),
+        )
+        return after_version
+
+    @staticmethod
+    def _jaunt_mutation_result(
+        connection: sqlite3.Connection,
+        jaunt_id: str,
+        operation: str,
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT version FROM jaunts WHERE id = ?",
+            (jaunt_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"Jaunt not found after mutation: {jaunt_id}")
+        return {
+            "jaunt": jaunt_id,
+            "version": row["version"],
+            "operation": operation,
+            "changed": {"jaunt_ids": [jaunt_id]},
+        }
+
+    def create_jaunt(self, title: str, notes: str = "") -> dict[str, Any]:
+        title = self._required(title, "title")
+        jaunt_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO jaunts (
+                    id, title, notes, status, version, created_at, updated_at
+                ) VALUES (?, ?, ?, 'open', 1, ?, ?)
+                """,
+                (jaunt_id, title, notes, now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO jaunt_events (
+                    jaunt_id, operation, before_version, after_version,
+                    summary, title_snapshot, notes_snapshot, status_snapshot,
+                    source_thread, created_at
+                ) VALUES (?, 'jaunt.created', 0, 1, ?, ?, ?, 'open', ?, ?)
+                """,
+                (
+                    jaunt_id,
+                    f"Created jaunt: {title}",
+                    title,
+                    notes,
+                    self.writer_thread_link,
+                    now,
+                ),
+            )
+            result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.created")
+            connection.commit()
+        return result
+
+    def list_jaunts(self, status: str | None = None) -> list[dict[str, Any]]:
+        if status is not None and status not in JAUNT_STATUSES:
+            raise ValidationError(f"Unknown jaunt status: {status}")
+        query = "SELECT * FROM jaunts"
+        parameters: tuple[Any, ...] = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            parameters = (status,)
+        query += " ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, updated_at DESC"
+        with self._connection() as connection:
+            return [dict(row) for row in connection.execute(query, parameters).fetchall()]
+
+    def get_jaunt(self, jaunt_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            result = dict(self._jaunt_row(connection, jaunt_id))
+            result["history"] = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM jaunt_events WHERE jaunt_id = ? ORDER BY id DESC",
+                    (jaunt_id,),
+                ).fetchall()
+            ]
+            return result
+
+    def update_jaunt(
+        self,
+        jaunt_id: str,
+        expected_version: int,
+        title: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        if title is None and notes is None:
+            raise ValidationError("title or notes is required")
+        next_title = self._required(title, "title") if title is not None else None
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            jaunt = self._locked_jaunt(connection, jaunt_id, expected_version)
+            if jaunt["status"] != "open":
+                raise ValidationError("only open jaunts may be edited")
+            updates: dict[str, Any] = {}
+            changed_fields: list[str] = []
+            if next_title is not None and next_title != jaunt["title"]:
+                updates["title"] = next_title
+                changed_fields.append("title")
+            if notes is not None and notes != jaunt["notes"]:
+                updates["notes"] = notes
+                changed_fields.append("notes")
+            if not changed_fields:
+                raise ValidationError("jaunt update does not change title or notes")
+            self._advance_jaunt(
+                connection,
+                jaunt,
+                "jaunt.updated",
+                f"Updated jaunt {', '.join(changed_fields)}",
+                updates,
+            )
+            result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.updated")
+            connection.commit()
+        return result
+
+    def complete_jaunt(
+        self,
+        jaunt_id: str,
+        expected_version: int,
+        summary: str = "Completed jaunt",
+    ) -> dict[str, Any]:
+        summary = self._required(summary, "summary")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            jaunt = self._locked_jaunt(connection, jaunt_id, expected_version)
+            if jaunt["status"] != "open":
+                raise ValidationError("only open jaunts may be completed")
+            self._advance_jaunt(
+                connection,
+                jaunt,
+                "jaunt.completed",
+                summary,
+                {"status": "completed", "completed_at": utc_now()},
+            )
+            result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.completed")
+            connection.commit()
+        return result
+
+    def reopen_jaunt(
+        self,
+        jaunt_id: str,
+        expected_version: int,
+        summary: str = "Reopened jaunt",
+    ) -> dict[str, Any]:
+        summary = self._required(summary, "summary")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            jaunt = self._locked_jaunt(connection, jaunt_id, expected_version)
+            if "open" not in JAUNT_TRANSITIONS[jaunt["status"]]:
+                raise ValidationError("only completed jaunts may be reopened")
+            self._advance_jaunt(
+                connection,
+                jaunt,
+                "jaunt.reopened",
+                summary,
+                {"status": "open", "completed_at": None},
+            )
+            result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.reopened")
+            connection.commit()
+        return result
 
     def create_journey(self, slug: str, title: str, objective: str) -> dict[str, Any]:
         if not self.writer_thread_id:
