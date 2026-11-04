@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+from wander import mcp_server
 from wander.mathoms import HippoClient, HippoError
 
 
@@ -50,6 +54,60 @@ class HippoClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(HippoError, "WANDER_HIPPO_TOKEN"):
             client.search_mathoms()
+
+    def test_mathom_mcp_handlers_are_async(self) -> None:
+        self.assertTrue(inspect.iscoroutinefunction(mcp_server.save_mathom))
+        self.assertTrue(inspect.iscoroutinefunction(mcp_server.search_mathoms))
+
+    def test_search_mathom_handler_awaits_async_client(self) -> None:
+        with patch.object(
+            mcp_server.hippo,
+            "search_mathoms_async",
+            new=AsyncMock(return_value={"findings": []}),
+        ) as search:
+            result = asyncio.run(
+                mcp_server.search_mathoms("SQLite connection", maximum_results=3)
+            )
+
+        self.assertEqual({"findings": []}, result)
+        search.assert_awaited_once_with("SQLite connection", None, 3)
+
+    def test_save_mathom_handler_awaits_async_client(self) -> None:
+        with (
+            patch.object(
+                mcp_server,
+                "store",
+                new=SimpleNamespace(writer_thread_link="codex://threads/thread-1"),
+            ),
+            patch.object(
+                mcp_server.hippo,
+                "record_mathom_async",
+                new=AsyncMock(return_value={"outcomes": []}),
+            ) as record,
+        ):
+            result = asyncio.run(
+                mcp_server.save_mathom(
+                    "observation",
+                    "python.sqlite.connection_context",
+                    "A sqlite3 connection context manager does not close the connection.",
+                    1.0,
+                )
+            )
+
+        self.assertEqual({"outcomes": []}, result)
+        record.assert_awaited_once_with(
+            "codex://threads/thread-1",
+            "observation",
+            "python.sqlite.connection_context",
+            "A sqlite3 connection context manager does not close the connection.",
+            1.0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 if __name__ == "__main__":

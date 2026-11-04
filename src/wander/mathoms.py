@@ -44,6 +44,68 @@ class HippoClient:
         effective_to: str | None = None,
         agent_model: str | None = None,
     ) -> dict[str, Any]:
+        return self._call_tool(
+            "record_operational_findings",
+            self._record_mathom_arguments(
+                source_session_id,
+                kind,
+                predicate,
+                statement,
+                confidence,
+                value,
+                entities,
+                evidence,
+                effective_from,
+                effective_to,
+                agent_model,
+            ),
+        )
+
+    async def record_mathom_async(
+        self,
+        source_session_id: str,
+        kind: str,
+        predicate: str,
+        statement: str,
+        confidence: float,
+        value: dict[str, Any] | None = None,
+        entities: list[dict[str, Any]] | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        effective_from: str | None = None,
+        effective_to: str | None = None,
+        agent_model: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._call_tool_async(
+            "record_operational_findings",
+            self._record_mathom_arguments(
+                source_session_id,
+                kind,
+                predicate,
+                statement,
+                confidence,
+                value,
+                entities,
+                evidence,
+                effective_from,
+                effective_to,
+                agent_model,
+            ),
+        )
+
+    @staticmethod
+    def _record_mathom_arguments(
+        source_session_id: str,
+        kind: str,
+        predicate: str,
+        statement: str,
+        confidence: float,
+        value: dict[str, Any] | None,
+        entities: list[dict[str, Any]] | None,
+        evidence: list[dict[str, Any]] | None,
+        effective_from: str | None,
+        effective_to: str | None,
+        agent_model: str | None,
+    ) -> dict[str, Any]:
         finding: dict[str, Any] = {
             "kind": kind,
             "predicate": predicate,
@@ -69,7 +131,7 @@ class HippoClient:
         if agent_model:
             arguments["request"]["agentModel"] = agent_model
 
-        return self._call_tool("record_operational_findings", arguments)
+        return arguments
 
     def search_mathoms(
         self,
@@ -77,16 +139,35 @@ class HippoClient:
         entity_identifiers: list[str] | None = None,
         maximum_results: int = 12,
     ) -> dict[str, Any]:
+        return self._call_tool(
+            "recall_operational_context",
+            self._search_mathom_arguments(query, entity_identifiers, maximum_results),
+        )
+
+    async def search_mathoms_async(
+        self,
+        query: str = "",
+        entity_identifiers: list[str] | None = None,
+        maximum_results: int = 12,
+    ) -> dict[str, Any]:
+        return await self._call_tool_async(
+            "recall_operational_context",
+            self._search_mathom_arguments(query, entity_identifiers, maximum_results),
+        )
+
+    @staticmethod
+    def _search_mathom_arguments(
+        query: str,
+        entity_identifiers: list[str] | None,
+        maximum_results: int,
+    ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "sourceSystems": [WANDER_SOURCE_SYSTEM],
             "entityIdentifiers": entity_identifiers or [],
             "concepts": [query] if query.strip() else [],
             "maximumResults": maximum_results,
         }
-        return self._call_tool(
-            "recall_operational_context",
-            {"request": request},
-        )
+        return {"request": request}
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if not self.token:

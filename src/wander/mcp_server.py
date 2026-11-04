@@ -76,7 +76,7 @@ def identify_thread(deep_link: str) -> dict[str, str]:
 
 
 @mcp.tool()
-def save_mathom(
+async def save_mathom(
     kind: str,
     predicate: str,
     statement: str,
@@ -101,7 +101,7 @@ def save_mathom(
             "Identify the current Codex thread before saving a Mathom so Hippo "
             "can retain its source-session provenance"
         )
-    return hippo.record_mathom(
+    return await hippo.record_mathom_async(
         store.writer_thread_link,
         kind,
         predicate,
@@ -117,7 +117,7 @@ def save_mathom(
 
 
 @mcp.tool()
-def search_mathoms(
+async def search_mathoms(
     query: str = "",
     entity_identifiers: list[str] | None = None,
     maximum_results: int = 12,
@@ -127,7 +127,7 @@ def search_mathoms(
     An empty query lists recent Wander-sourced Mathoms. Entity identifiers may
     optionally constrain results. This read does not authorize a later write.
     """
-    return hippo.search_mathoms(query, entity_identifiers, maximum_results)
+    return await hippo.search_mathoms_async(query, entity_identifiers, maximum_results)
 
 
 @mcp.tool()
