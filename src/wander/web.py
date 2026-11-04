@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import ipaddress
 import json
 import socket
@@ -9,7 +8,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wander.paths import default_database_path
 from wander.store import ConflictError, NotFoundError, ValidationError, WanderStore
 
 
@@ -307,31 +305,10 @@ def create_server(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve the Wander dashboard")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--database", type=Path, default=default_database_path())
-    parser.add_argument(
-        "--share-base-url",
-        default=os.environ.get("WANDER_SHARE_BASE_URL"),
-        help="Absolute network-reachable origin advertised by the Share action",
+    raise RuntimeError(
+        "The Wander dashboard is hosted by the Wander desktop application. "
+        "Start Wander instead."
     )
-    arguments = parser.parse_args()
-    server = create_server(
-        arguments.host,
-        arguments.port,
-        WanderStore(arguments.database),
-        arguments.share_base_url,
-    )
-    print(f"Wander dashboard: http://{arguments.host}:{server.server_port}")
-    print(f"Wander share URL: {server.RequestHandlerClass.share_base_url}")
-    print("Journey HTTP state is read-only; Jaunt authoring is localhost-only.")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
 
 
 if __name__ == "__main__":

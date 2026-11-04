@@ -2,17 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from wander import mcp_server
 from wander.mathoms import HippoClient, HippoError
+from wander.store import WanderStore
 
 
 class HippoClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = HippoClient("http://localhost:8787/mcp", "test-token")
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.application_store = WanderStore(
+            Path(self.temporary_directory.name) / "wander.db"
+        )
+        mcp_server.configure_mcp_server(self.application_store, self.client)
+
+    def tearDown(self) -> None:
+        mcp_server.release_mcp_server(self.application_store)
+        self.temporary_directory.cleanup()
 
     def test_record_mathom_uses_session_without_caller_controlled_source(self) -> None:
         with patch.object(

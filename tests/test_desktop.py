@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
 from urllib.request import urlopen
 
+from wander import mcp_server
 from wander.desktop import DesktopHost, DesktopStartupError, run_desktop
 
 
@@ -20,6 +24,8 @@ class DesktopHostTests(unittest.TestCase):
                 0,
                 Path(temporary_directory) / "wander.db",
             )
+            self.assertIs(host.store, mcp_server.store)
+            self.assertIs(host.store, host.server.RequestHandlerClass.store)
             host.start()
             thread = host.thread
             with urlopen(f"{host.local_url}/api/health", timeout=1) as response:
@@ -30,6 +36,7 @@ class DesktopHostTests(unittest.TestCase):
             host.stop()
 
             self.assertFalse(thread and thread.is_alive())
+            self.assertIsNone(mcp_server.store)
             with self.assertRaises(OSError):
                 socket.create_connection(("127.0.0.1", host.server.server_port), timeout=0.2)
 
@@ -44,6 +51,24 @@ class DesktopHostTests(unittest.TestCase):
                     port,
                     Path(temporary_directory) / "wander.db",
                 )
+
+    def test_mcp_module_cannot_open_a_database_by_itself(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "must-not-exist.db"
+            environment = os.environ.copy()
+            environment["WANDER_DB"] = str(database_path)
+
+            result = subprocess.run(
+                [sys.executable, "-m", "wander.mcp_server"],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("hosted by the Wander desktop application", result.stderr)
+            self.assertFalse(database_path.exists())
 
     def test_database_open_failure_is_not_reported_as_port_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -1,34 +1,15 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from wander.mathoms import HippoClient
-from wander.paths import default_database_path
-from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderStore
+from wander.store import WanderStore
 
 
-def current_thread_id() -> str | None:
-    host_thread_id = os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
-    supplied_link = os.environ.get("WANDER_THREAD_LINK", "").strip()
-    supplied_thread_id = None
-    if supplied_link:
-        if not THREAD_LINK_PATTERN.fullmatch(supplied_link):
-            raise ValidationError(
-                "WANDER_THREAD_LINK must have the form codex://threads/<thread-id>"
-            )
-        supplied_thread_id = supplied_link.removeprefix("codex://threads/")
-    if host_thread_id and supplied_thread_id and host_thread_id != supplied_thread_id:
-        raise ValidationError(
-            "WANDER_THREAD_LINK does not match the host-provided CODEX_THREAD_ID"
-        )
-    return host_thread_id or supplied_thread_id
-
-
-store = WanderStore(default_database_path(), current_thread_id())
-hippo = HippoClient.from_environment()
+store: WanderStore | None = None
+hippo: HippoClient | None = None
 mcp = MCPServer(
     "wander",
     version="0.8.0",
@@ -46,6 +27,27 @@ mcp = MCPServer(
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
     ),
 )
+
+
+def configure_mcp_server(
+    application_store: WanderStore,
+    hippo_client: HippoClient | None = None,
+) -> MCPServer:
+    """Inject the dependencies owned by the running Wander application."""
+    global store, hippo
+    if store is not None and store is not application_store:
+        raise RuntimeError("Wander MCP is already attached to another application store")
+    store = application_store
+    hippo = hippo_client or HippoClient.from_environment()
+    return mcp
+
+
+def release_mcp_server(application_store: WanderStore) -> None:
+    """Release an application store after its transports have stopped."""
+    global store, hippo
+    if store is application_store:
+        store = None
+        hippo = None
 
 
 @mcp.tool()
@@ -405,7 +407,9 @@ def set_journey_status(
 
 
 def main() -> None:
-    mcp.run()
+    raise RuntimeError(
+        "Wander MCP is hosted by the Wander desktop application. Start Wander instead."
+    )
 
 
 if __name__ == "__main__":

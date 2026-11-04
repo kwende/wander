@@ -22,7 +22,8 @@ Set-Location D:\repos\wander
 The desktop entry point starts the existing HTTP dashboard in-process, waits
 for it to become healthy, and opens it in a native WebView2 window. Closing the
 window shuts down that HTTP server cleanly. During development,
-`scripts\start-web.ps1` remains available for browser-only use.
+`scripts\start-web.ps1` remains as a compatibility launcher for the same desktop
+application and no longer opens the ledger independently.
 
 The dashboard listens on all network interfaces at port `8765`. Open
 `http://localhost:8765` on this machine or `http://<host-ip>:8765` from another

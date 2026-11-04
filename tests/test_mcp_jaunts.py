@@ -4,7 +4,6 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from wander import mcp_server
 from wander.store import WanderStore
@@ -15,11 +14,10 @@ class JauntMcpTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "wander.db"
         self.store = WanderStore(database_path, "jaunt-mcp-test")
-        self.store_patch = patch.object(mcp_server, "store", new=self.store)
-        self.store_patch.start()
+        mcp_server.configure_mcp_server(self.store)
 
     def tearDown(self) -> None:
-        self.store_patch.stop()
+        mcp_server.release_mcp_server(self.store)
         self.temporary_directory.cleanup()
 
     def test_mcp_handlers_cover_independent_jaunt_lifecycle(self) -> None:

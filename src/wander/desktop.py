@@ -13,6 +13,7 @@ from types import ModuleType
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from wander.mcp_server import configure_mcp_server, release_mcp_server
 from wander.paths import default_database_path
 from wander.store import WanderStore
 from wander.web import create_server
@@ -25,6 +26,7 @@ class DesktopStartupError(RuntimeError):
 @dataclass
 class DesktopHost:
     server: ThreadingHTTPServer
+    store: WanderStore
     thread: threading.Thread | None = None
 
     @classmethod
@@ -41,6 +43,7 @@ class DesktopHost:
             raise DesktopStartupError(
                 f"Wander could not open its database at {database_path}: {error}"
             ) from error
+        configure_mcp_server(store)
         try:
             server = create_server(
                 host,
@@ -49,11 +52,15 @@ class DesktopHost:
                 share_base_url,
             )
         except OSError as error:
+            release_mcp_server(store)
             raise DesktopStartupError(
                 f"Wander could not listen on {host}:{port}: {error}. "
                 "Another Wander instance or application may already own that address."
             ) from error
-        return cls(server)
+        except Exception:
+            release_mcp_server(store)
+            raise
+        return cls(server, store)
 
     @property
     def local_url(self) -> str:
@@ -89,6 +96,7 @@ class DesktopHost:
             thread.join(timeout=5)
         self.server.server_close()
         self.thread = None
+        release_mcp_server(self.store)
 
 
 def run_desktop(
