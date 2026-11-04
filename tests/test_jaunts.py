@@ -66,7 +66,7 @@ class JauntStoreTests(unittest.TestCase):
             [event["notes_snapshot"] for event in jaunt["history"]],
         )
 
-    def test_completed_jaunt_cannot_be_edited_or_completed_again(self) -> None:
+    def test_completed_jaunt_can_be_reopened_but_not_edited_before_reopening(self) -> None:
         created = self.store.create_jaunt("Handle a bounded request", "Initial notes")
         jaunt_id = created["jaunt"]
 
@@ -88,6 +88,25 @@ class JauntStoreTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValidationError, "only open jaunts"):
             self.store.complete_jaunt(jaunt_id, completed["version"])
+
+        reopened = self.store.reopen_jaunt(
+            jaunt_id,
+            completed["version"],
+            "The request needs another look.",
+        )
+        self.store.update_jaunt(
+            jaunt_id,
+            reopened["version"],
+            notes="Additional investigation is active.",
+        )
+
+        jaunt = self.store.get_jaunt(jaunt_id)
+        self.assertEqual("open", jaunt["status"])
+        self.assertIsNone(jaunt["completed_at"])
+        self.assertEqual(
+            ["jaunt.updated", "jaunt.reopened", "jaunt.completed", "jaunt.created"],
+            [event["operation"] for event in jaunt["history"]],
+        )
 
     def test_list_filters_status_and_rejects_unknown_status(self) -> None:
         open_jaunt = self.store.create_jaunt("Open jaunt")

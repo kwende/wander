@@ -33,6 +33,11 @@ ITEM_TRANSITIONS = {
     "abandoned": set(),
 }
 JAUNT_STATUSES = {"open", "completed", "promoted"}
+JAUNT_TRANSITIONS = {
+    "open": {"completed", "promoted"},
+    "completed": {"open", "promoted"},
+    "promoted": set(),
+}
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
@@ -635,6 +640,29 @@ class WanderStore:
                 {"status": "completed", "completed_at": utc_now()},
             )
             result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.completed")
+            connection.commit()
+        return result
+
+    def reopen_jaunt(
+        self,
+        jaunt_id: str,
+        expected_version: int,
+        summary: str = "Reopened jaunt",
+    ) -> dict[str, Any]:
+        summary = self._required(summary, "summary")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            jaunt = self._locked_jaunt(connection, jaunt_id, expected_version)
+            if "open" not in JAUNT_TRANSITIONS[jaunt["status"]]:
+                raise ValidationError("only completed jaunts may be reopened")
+            self._advance_jaunt(
+                connection,
+                jaunt,
+                "jaunt.reopened",
+                summary,
+                {"status": "open", "completed_at": None},
+            )
+            result = self._jaunt_mutation_result(connection, jaunt_id, "jaunt.reopened")
             connection.commit()
         return result
 
