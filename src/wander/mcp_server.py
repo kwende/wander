@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from wander.mathoms import HippoClient
+from wander.paths import default_database_path
 from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderStore
-
-
-def default_database_path() -> Path:
-    configured = os.environ.get("WANDER_DB")
-    if configured:
-        return Path(configured)
-    return Path(__file__).resolve().parents[2] / "data" / "wander.db"
 
 
 def current_thread_id() -> str | None:

@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
-import os
 import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from wander.paths import default_database_path
 from wander.store import ConflictError, NotFoundError, ValidationError, WanderStore
 
 
@@ -304,13 +304,6 @@ def create_server(
         share_base_url or f"http://{advertised_host}:{server.server_port}"
     )
     return server
-
-
-def default_database_path() -> Path:
-    configured = os.environ.get("WANDER_DB")
-    if configured:
-        return Path(configured)
-    return Path(__file__).resolve().parents[2] / "data" / "wander.db"
 
 
 def main() -> None:

@@ -12,11 +12,13 @@ dependencies = [
     "anyio==4.15.1",
     "httpx2==2.16.0",
     "mcp==2.3.0",
+    "pywebview==6.2.1",
 ]
 
 [project.scripts]
 wander-mcp = "wander.mcp_server:main"
 wander-web = "wander.web:main"
+wander-desktop = "wander.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

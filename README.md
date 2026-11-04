@@ -16,8 +16,13 @@ ledger and the dashboard has no Mathom write interface.
 ```powershell
 Set-Location D:\repos\wander
 & .\scripts\setup.ps1
-& .\scripts\start-web.ps1
+& .\.venv\Scripts\wander-desktop.exe
 ```
+
+The desktop entry point starts the existing HTTP dashboard in-process, waits
+for it to become healthy, and opens it in a native WebView2 window. Closing the
+window shuts down that HTTP server cleanly. During development,
+`scripts\start-web.ps1` remains available for browser-only use.
 
 The dashboard listens on all network interfaces at port `8765`. Open
 `http://localhost:8765` on this machine or `http://<host-ip>:8765` from another
