@@ -40,10 +40,14 @@ mcp = MCPServer(
     "wander",
     version="0.8.0",
     instructions=(
-        "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
+        "Wander is the authoritative multi-thread work ledger. Read resume context before Journey work. "
         "Identify the current Codex thread before the first mutation. "
-        "Pass the last-read journey version to every mutation. Record evidence before completion. "
+        "Pass the last-read aggregate version to every mutation after creation. "
+        "Record evidence before Journey completion. "
         "Mutation results are compact deltas; chain writes with their returned version. "
+        "Jaunts are standalone, user-controlled lightweight tasks, not miniature Journeys. "
+        "Create a Jaunt only when the user explicitly asks, and use its independent version for edits. "
+        "Never emulate promotion by creating or labeling a Journey. "
         "Mathoms are request-only: never save one unless the user explicitly asks to "
         "preserve the specific knowledge in the current conversation. "
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
@@ -73,6 +77,55 @@ def get_resume_context(journey: str) -> dict[str, Any]:
 def identify_thread(deep_link: str) -> dict[str, str]:
     """Bind this MCP session to one supported codex://threads/<thread-id> identity."""
     return store.identify_writer_thread(deep_link)
+
+
+@mcp.tool()
+def list_jaunts(status: str | None = None) -> list[dict[str, Any]]:
+    """List standalone Jaunts, optionally filtered by open, completed, or promoted."""
+    return store.list_jaunts(status)
+
+
+@mcp.tool()
+def get_jaunt(jaunt_id: str) -> dict[str, Any]:
+    """Get one standalone Jaunt with its retained event history."""
+    return store.get_jaunt(jaunt_id)
+
+
+@mcp.tool()
+def create_jaunt(title: str, notes: str = "") -> dict[str, Any]:
+    """Create a standalone Jaunt only when the user explicitly asks for one."""
+    return store.create_jaunt(title, notes)
+
+
+@mcp.tool()
+def update_jaunt(
+    jaunt_id: str,
+    expected_version: int,
+    title: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Edit an open Jaunt using the version returned by the last Jaunt read or mutation."""
+    return store.update_jaunt(jaunt_id, expected_version, title, notes)
+
+
+@mcp.tool()
+def complete_jaunt(
+    jaunt_id: str,
+    expected_version: int,
+    summary: str = "Completed jaunt",
+) -> dict[str, Any]:
+    """Complete an open Jaunt while retaining its notes and event history."""
+    return store.complete_jaunt(jaunt_id, expected_version, summary)
+
+
+@mcp.tool()
+def reopen_jaunt(
+    jaunt_id: str,
+    expected_version: int,
+    summary: str = "Reopened jaunt",
+) -> dict[str, Any]:
+    """Reopen a completed Jaunt so that it can be edited or completed again."""
+    return store.reopen_jaunt(jaunt_id, expected_version, summary)
 
 
 @mcp.tool()
