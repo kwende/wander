@@ -19,11 +19,11 @@ Set-Location D:\repos\wander
 & .\.venv\Scripts\wander-desktop.exe
 ```
 
-The desktop entry point starts the existing HTTP dashboard in-process, waits
-for it to become healthy, and opens it in a native WebView2 window. Closing the
-window shuts down that HTTP server cleanly. During development,
-`scripts\start-web.ps1` remains as a compatibility launcher for the same desktop
-application and no longer opens the ledger independently.
+The desktop entry point starts the HTTP dashboard and a stateless Streamable
+HTTP MCP endpoint in-process, verifies both protocols, and then opens a native
+WebView2 window. Closing the window shuts down both listeners cleanly. During
+development, `scripts\start-web.ps1` remains as a compatibility launcher for
+the same desktop application and no longer opens the ledger independently.
 
 The dashboard listens on all network interfaces at port `8765`. Open
 `http://localhost:8765` on this machine or `http://<host-ip>:8765` from another
@@ -31,6 +31,10 @@ machine on the same reachable network. Windows Firewall may require an inbound
 rule. Anyone who can reach the port can read the Journey notes. Jaunt reads and
 writes require a loopback TCP peer; LAN clients receive `403` even if they know
 the Jaunt API path.
+
+The MCP endpoint listens only on `http://127.0.0.1:8766/mcp`; it is never
+exposed on the LAN listener. Use `--mcp-port <port>` only for development or
+diagnostic isolation.
 
 The server advertises its preferred LAN IPv4 address to the Share action, so a
 link copied from `localhost` remains reachable from another machine. On a VPN or

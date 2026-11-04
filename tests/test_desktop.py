@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -12,8 +13,34 @@ import unittest
 from pathlib import Path
 from urllib.request import urlopen
 
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
 from wander import mcp_server
 from wander.desktop import DesktopHost, DesktopStartupError, run_desktop
+
+
+async def list_mcp_tools(url: str) -> set[str]:
+    async with streamable_http_client(url) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            return {tool.name for tool in (await session.list_tools()).tools}
+
+
+async def create_journey_through_mcp(url: str, slug: str) -> None:
+    async with streamable_http_client(url) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "create_journey",
+                {
+                    "slug": slug,
+                    "title": "Shared ledger",
+                    "objective": "Prove UI and MCP use one application store.",
+                },
+            )
+            if result.is_error:
+                raise AssertionError(result.content)
 
 
 class DesktopHostTests(unittest.TestCase):
@@ -23,22 +50,53 @@ class DesktopHostTests(unittest.TestCase):
                 "127.0.0.1",
                 0,
                 Path(temporary_directory) / "wander.db",
+                mcp_port=0,
             )
             self.assertIs(host.store, mcp_server.store)
             self.assertIs(host.store, host.server.RequestHandlerClass.store)
             host.start()
             thread = host.thread
+            mcp_thread = host.mcp_thread
             with urlopen(f"{host.local_url}/api/health", timeout=1) as response:
                 health = json.load(response)
             self.assertEqual("ok", health["status"])
             self.assertTrue(thread and thread.is_alive())
+            self.assertTrue(mcp_thread and mcp_thread.is_alive())
+            self.assertIn("list_journeys", asyncio.run(list_mcp_tools(host.mcp_url)))
+            mcp_port = host.mcp_port
 
             host.stop()
 
             self.assertFalse(thread and thread.is_alive())
+            self.assertFalse(mcp_thread and mcp_thread.is_alive())
             self.assertIsNone(mcp_server.store)
             with self.assertRaises(OSError):
                 socket.create_connection(("127.0.0.1", host.server.server_port), timeout=0.2)
+            with self.assertRaises(OSError):
+                socket.create_connection(("127.0.0.1", mcp_port), timeout=0.2)
+
+    def test_ui_and_mcp_share_the_application_store(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            host = DesktopHost.create(
+                "127.0.0.1",
+                0,
+                Path(temporary_directory) / "wander.db",
+                mcp_port=0,
+            )
+            try:
+                host.start()
+                asyncio.run(create_journey_through_mcp(host.mcp_url, "shared-ledger"))
+
+                with urlopen(
+                    f"{host.local_url}/api/journeys/shared-ledger", timeout=1
+                ) as response:
+                    journey = json.load(response)
+
+                self.assertEqual("Shared ledger", journey["title"])
+                self.assertIs(host.store, host.server.RequestHandlerClass.store)
+                self.assertEqual("127.0.0.1", host.mcp_transport.config.host)
+            finally:
+                host.stop()
 
     def test_port_conflict_is_reported_as_startup_error(self) -> None:
         with socket.socket() as occupied, tempfile.TemporaryDirectory() as temporary_directory:
@@ -50,7 +108,23 @@ class DesktopHostTests(unittest.TestCase):
                     "127.0.0.1",
                     port,
                     Path(temporary_directory) / "wander.db",
+                    mcp_port=0,
                 )
+
+    def test_mcp_port_conflict_is_reported_as_startup_error(self) -> None:
+        with socket.socket() as occupied, tempfile.TemporaryDirectory() as temporary_directory:
+            occupied.bind(("127.0.0.1", 0))
+            occupied.listen()
+            port = occupied.getsockname()[1]
+            host = DesktopHost.create(
+                "127.0.0.1",
+                0,
+                Path(temporary_directory) / "wander.db",
+                mcp_port=port,
+            )
+
+            with self.assertRaisesRegex(DesktopStartupError, "MCP server could not listen"):
+                host.start(timeout_seconds=1)
 
     def test_mcp_module_cannot_open_a_database_by_itself(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -97,6 +171,7 @@ class DesktopHostTests(unittest.TestCase):
                 "127.0.0.1",
                 0,
                 Path(temporary_directory) / "wander.db",
+                mcp_port=0,
                 webview_module=fake_webview,
             )
 
