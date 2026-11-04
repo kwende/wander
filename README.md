@@ -4,6 +4,11 @@ Wander is a durable, multi-thread workboard for Codex journeys. SQLite is the
 authoritative state. Codex mutates that state through semantic MCP tools; the
 network dashboard is deliberately read-only.
 
+Wander also names user-requested nuggets of retained knowledge **Mathoms**.
+Mathoms are stored only in Hippo, attributed to the `wander` source system, and
+accessed through Wander's MCP tools. They are not part of the SQLite journey
+ledger and the dashboard has no Mathom write interface.
+
 ## Run locally
 
 ```powershell
@@ -80,6 +85,24 @@ task`; the skill discovers or creates the journey, binds the MCP session to the
 host-provided conversation identity, and builds the high-level work-item
 sequence. The identity is passed explicitly because a globally launched MCP
 process does not necessarily inherit the calling thread's environment.
+
+To enable Mathom tools, configure the Hippo MCP endpoint and the dedicated
+Wander credential before starting Codex:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "WANDER_HIPPO_URL",
+    "http://localhost:8787/mcp",
+    "User")
+[Environment]::SetEnvironmentVariable(
+    "WANDER_HIPPO_TOKEN",
+    "<the Hippo Wander-client token>",
+    "User")
+```
+
+`save_mathom` may be called only after an explicit user request to preserve the
+specific knowledge. `search_mathoms` searches or lists only Hippo records whose
+source system is `wander`. Restart Codex after changing either variable.
 
 The repository is also a local Agent Plugin package. Its manifest is
 `plugin.json`, its MCP declaration is `mcp.json`, and its packaged skill is in

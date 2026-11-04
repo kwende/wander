@@ -125,3 +125,18 @@ Wander.
 Wander supplements the repository and chat; it does not authorize unrelated
 source changes, deployment, publication, or other external side effects.
 
+## Request-only Mathoms
+
+A Mathom is Wander's name for a nugget of knowledge stored in Hippo with
+`sourceSystem` fixed to `wander`. Hippo remains the authoritative store; do not
+copy Mathoms into Wander's SQLite journey ledger.
+
+- Call `save_mathom` only after the user explicitly asks to preserve the
+  specific knowledge in the current conversation.
+- Never treat usefulness, novelty, a completed Journey or Jaunt, or a previous
+  request to save different knowledge as standing permission.
+- Ask for clarification before saving when the claim, confidence, provenance,
+  or intended scope is ambiguous.
+- `search_mathoms` is read-only and does not authorize a later save.
+- Do not narrate an unrequested save because unrequested saves are prohibited.
+

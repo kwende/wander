@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from wander.mathoms import HippoClient
 from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderStore
 
 
@@ -34,14 +35,17 @@ def current_thread_id() -> str | None:
 
 
 store = WanderStore(default_database_path(), current_thread_id())
+hippo = HippoClient.from_environment()
 mcp = MCPServer(
     "wander",
-    version="0.7.0",
+    version="0.8.0",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
         "Identify the current Codex thread before the first mutation. "
         "Pass the last-read journey version to every mutation. Record evidence before completion. "
         "Mutation results are compact deltas; chain writes with their returned version. "
+        "Mathoms are request-only: never save one unless the user explicitly asks to "
+        "preserve the specific knowledge in the current conversation. "
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
     ),
 )
@@ -69,6 +73,61 @@ def get_resume_context(journey: str) -> dict[str, Any]:
 def identify_thread(deep_link: str) -> dict[str, str]:
     """Bind this MCP session to one supported codex://threads/<thread-id> identity."""
     return store.identify_writer_thread(deep_link)
+
+
+@mcp.tool()
+def save_mathom(
+    kind: str,
+    predicate: str,
+    statement: str,
+    confidence: float,
+    value: dict[str, Any] | None = None,
+    entities: list[dict[str, Any]] | None = None,
+    evidence: list[dict[str, Any]] | None = None,
+    effective_from: str | None = None,
+    effective_to: str | None = None,
+    agent_model: str | None = None,
+) -> dict[str, Any]:
+    """Save one user-requested Mathom in Hippo.
+
+    Call this only after the user explicitly asks to save or remember the
+    specific knowledge represented by these arguments. Never infer permission
+    from usefulness, novelty, a completed Journey, or an earlier standing
+    request. Clarify the claim or evidence with the user before calling when
+    its meaning is ambiguous.
+    """
+    if not store.writer_thread_link:
+        raise ValidationError(
+            "Identify the current Codex thread before saving a Mathom so Hippo "
+            "can retain its source-session provenance"
+        )
+    return hippo.record_mathom(
+        store.writer_thread_link,
+        kind,
+        predicate,
+        statement,
+        confidence,
+        value,
+        entities,
+        evidence,
+        effective_from,
+        effective_to,
+        agent_model,
+    )
+
+
+@mcp.tool()
+def search_mathoms(
+    query: str = "",
+    entity_identifiers: list[str] | None = None,
+    maximum_results: int = 12,
+) -> dict[str, Any]:
+    """Search knowledge saved by Wander as Mathoms in Hippo.
+
+    An empty query lists recent Wander-sourced Mathoms. Entity identifiers may
+    optionally constrain results. This read does not authorize a later write.
+    """
+    return hippo.search_mathoms(query, entity_identifiers, maximum_results)
 
 
 @mcp.tool()

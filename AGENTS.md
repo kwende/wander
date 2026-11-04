@@ -49,6 +49,12 @@ Python, MCP entry point, and skill destination without changing the machine.
 - SQLite is the source of truth.
 - The HTTP dashboard is read-only. Do not add mutation routes.
 - State changes use semantic MCP tools rather than generic SQL or CRUD tools.
+- Mathoms are request-only knowledge retained in Hippo with `source_system` set
+  to `wander`. Never save a Mathom without an explicit user request concerning
+  the specific knowledge. Do not infer permission from novelty, usefulness,
+  completed work, or a prior request to save something else.
+- Hippo is authoritative for Mathom storage. Do not add a parallel Mathom table
+  to Wander's SQLite ledger or expose an HTTP mutation route for Mathoms.
 - Every mutation requires `expected_version`, advances the journey version, and
   appends a provenance event in the same transaction.
 - Completion requires concrete evidence.
