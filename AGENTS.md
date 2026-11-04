@@ -28,8 +28,8 @@ Windows machine, use this contract instead of reconstructing the installation:
    `& .\scripts\start-web.ps1`. Verify `/api/health` reports `mode: read-only`
    and a reachable `share_base_url`. If multi-NIC detection selects the wrong
    adapter, restart with `-ShareBaseUrl 'http://<reachable-ip>:8765'`.
-7. After Codex restarts, call Wander `list_projects` and then create or resume
-   the requested project. Do not claim installation succeeded merely because
+7. After Codex restarts, call Wander `list_journeys` and then create or resume
+   the requested journey. Do not claim installation succeeded merely because
    the Python package installed.
 
 Use the global MCP plus user-skill installation model above. Do not also install
@@ -39,7 +39,7 @@ the same database.
 `data\wander.db` is intentionally gitignored. A new checkout starts with a new
 ledger. To migrate existing workboards, stop the Wander MCP and web processes,
 copy the SQLite database together with any `-wal`/`-shm` companions, then start
-Wander and verify the project list. Never copy a live SQLite database piecemeal.
+Wander and verify the journey list. Never copy a live SQLite database piecemeal.
 
 Run `& .\scripts\install-codex.ps1 -PlanOnly` to inspect the resolved checkout,
 Python, MCP entry point, and skill destination without changing the machine.
@@ -49,7 +49,7 @@ Python, MCP entry point, and skill destination without changing the machine.
 - SQLite is the source of truth.
 - The HTTP dashboard is read-only. Do not add mutation routes.
 - State changes use semantic MCP tools rather than generic SQL or CRUD tools.
-- Every mutation requires `expected_version`, advances the project version, and
+- Every mutation requires `expected_version`, advances the journey version, and
   appends a provenance event in the same transaction.
 - Completion requires concrete evidence.
 - A parent work item cannot complete while any child is pending, active, or
@@ -65,12 +65,12 @@ Python, MCP entry point, and skill destination without changing the machine.
   Wander batches through the configured GitHub MCP.
 - `prepare_github_issue_projection` is read-only. Creating the first projection
   comment is followed by `register_github_projection_comment`, which stores the
-  stable `#issuecomment-...` URL as a versioned project link. Regenerate the
-  comment afterward because registration advances the Wander project version.
+  stable `#issuecomment-...` URL as a versioned journey link. Regenerate the
+  comment afterward because registration advances the Wander journey version.
 - If the registered GitHub comment is missing or an update fails, leave Wander
   unchanged, report the projection as stale, and do not create a duplicate
   comment automatically.
-- Before first-comment creation, search comments for the exact stable project
+- Before first-comment creation, search comments for the exact stable journey
   marker. Reuse one match to recover an interrupted registration, create only
   when there are zero matches, and stop on multiple matches. Marker discovery
   recovers identity only and never imports GitHub content into Wander.
@@ -92,7 +92,7 @@ Python, MCP entry point, and skill destination without changing the machine.
 
 ## Active-work detail and resumability
 
-Keep the project's stable milestone list concise, but optimize the active work
+Keep the journey's stable milestone list concise, but optimize the active work
 path for interruption recovery rather than brevity. When an active item has two
 or more known steps that can be started, completed, verified, blocked,
 delegated, or returned to independently, add those steps as child work items.
@@ -145,6 +145,6 @@ exists.
 At the beginning of participating work, call `get_resume_context`. After a
 meaningful semantic batch, update the relevant item and record a checkpoint
 containing the current model, last decision, invariants, open questions, and
-best resume point. If the project has exactly one linked GitHub issue, refresh
+best resume point. If the journey has exactly one linked GitHub issue, refresh
 its registered Wander projection comment after the batch.
 

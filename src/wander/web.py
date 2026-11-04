@@ -73,14 +73,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
-            if path == "/api/projects":
-                self._send_json(HTTPStatus.OK, self.store.list_projects())
+            if path in {"/api/journeys", "/api/projects"}:
+                self._send_json(HTTPStatus.OK, self.store.list_journeys())
                 return
-            if path.startswith("/api/projects/"):
-                project = path.removeprefix("/api/projects/")
-                if not project or "/" in project:
-                    raise ValidationError("Invalid project path")
-                self._send_json(HTTPStatus.OK, self.store.get_project(project))
+            journey_prefix = next(
+                (
+                    prefix
+                    for prefix in ("/api/journeys/", "/api/projects/")
+                    if path.startswith(prefix)
+                ),
+                None,
+            )
+            if journey_prefix:
+                journey = path.removeprefix(journey_prefix)
+                if not journey or "/" in journey:
+                    raise ValidationError("Invalid journey path")
+                self._send_json(HTTPStatus.OK, self.store.get_journey(journey))
                 return
             self._serve_static(path)
         except NotFoundError as error:

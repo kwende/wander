@@ -102,20 +102,20 @@ button:hover { border-color: var(--accent); }
   padding: clamp(1.4rem, 4vw, 2.5rem);
 }
 
-.project-title {
+.journey-title {
   display: flex;
   gap: 0.4rem;
   margin-bottom: 0.75rem;
   font-size: 1.1rem;
 }
 
-.project-title span,
+.journey-title span,
 .objective > span:first-child {
   color: var(--muted);
   font-weight: 500;
 }
 
-.project-title strong { font-weight: 650; }
+.journey-title strong { font-weight: 650; }
 
 .share-link {
   align-self: center;
@@ -145,7 +145,7 @@ button:hover { border-color: var(--accent); }
 
 .objective > [data-field="objective"] { display: block; }
 
-.project-links {
+.journey-links {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 0.7rem;
@@ -153,7 +153,7 @@ button:hover { border-color: var(--accent); }
   margin-top: 1rem;
 }
 
-.project-links > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.journey-links > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .link-list, .commit-links { display: flex; flex-wrap: wrap; gap: 0.45rem 0.75rem; }
 .link-list a, .commit-links a { color: var(--accent); text-decoration: none; }
 .link-list a:hover, .commit-links a:hover { text-decoration: underline; }

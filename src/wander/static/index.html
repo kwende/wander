@@ -14,8 +14,8 @@
       <p class="brand-tagline">Not all who wander are lost.</p>
     </div>
     <div class="topbar-actions">
-      <label id="project-select-label" for="project-select">Project</label>
-      <select id="project-select" aria-label="Select project"></select>
+      <label id="journey-select-label" for="journey-select">Journey</label>
+      <select id="journey-select" aria-label="Select journey"></select>
       <button id="refresh-button" type="button">Refresh</button>
     </div>
   </header>
@@ -28,7 +28,7 @@
     </section>
   </main>
 
-  <template id="project-template">
+  <template id="journey-template">
     <section class="hero panel">
       <div>
         <div class="status-line">
@@ -36,18 +36,18 @@
           <span data-field="status"></span>
           <span class="version" data-field="version"></span>
         </div>
-        <p class="project-title">
-          <span>Project:</span>
+        <p class="journey-title">
+          <span>Journey:</span>
           <strong data-field="title"></strong>
           <a class="share-link" data-action="share" href="#">Share</a>
         </p>
         <p class="objective">
-          <span>Project Description:</span>
+          <span>Journey Description:</span>
           <span data-field="objective"></span>
         </p>
-        <div class="project-links" data-section="project-links" hidden>
+        <div class="journey-links" data-section="journey-links" hidden>
           <span>Links:</span>
-          <div class="link-list" data-list="project-links"></div>
+          <div class="link-list" data-list="journey-links"></div>
         </div>
       </div>
     </section>

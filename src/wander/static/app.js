@@ -1,14 +1,14 @@
-const select = document.querySelector("#project-select");
-const selectLabel = document.querySelector("#project-select-label");
+const select = document.querySelector("#journey-select");
+const selectLabel = document.querySelector("#journey-select-label");
 const refreshButton = document.querySelector("#refresh-button");
 const dashboard = document.querySelector("#dashboard");
-const template = document.querySelector("#project-template");
+const template = document.querySelector("#journey-template");
 const query = new URLSearchParams(window.location.search);
-const requestedProject = query.get("project");
+const requestedJourney = query.get("journey") || query.get("project");
 const requestedItem = query.get("item");
-const sharedProject = query.get("shared") === "1" ? query.get("project") : null;
+const sharedJourney = query.get("shared") === "1" ? requestedJourney : null;
 const localAuthoringHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const isLocalAuthoringView = !sharedProject && localAuthoringHosts.has(window.location.hostname);
+const isLocalAuthoringView = !sharedJourney && localAuthoringHosts.has(window.location.hostname);
 let shareBaseUrl = window.location.origin;
 
 const markers = {
@@ -31,10 +31,10 @@ function text(root, selector, value) {
   root.querySelector(selector).textContent = value || "—";
 }
 
-function buildShareUrl(project) {
+function buildShareUrl(journey) {
   const url = new URL(shareBaseUrl);
   url.search = "";
-  url.searchParams.set("project", project.slug);
+  url.searchParams.set("journey", journey.slug);
   url.searchParams.set("shared", "1");
   return url.toString();
 }
@@ -63,22 +63,22 @@ async function copyUrl(control, url, defaultLabel) {
   }
 }
 
-function buildCodexUrl(project, item) {
+function buildCodexUrl(journey, item) {
   const url = new URL(window.location.href);
   url.search = "";
-  url.searchParams.set("project", project.slug);
+  url.searchParams.set("journey", journey.slug);
   url.searchParams.set("item", item.id);
   return url.toString();
 }
 
-function createCodexLink(project, item) {
+function createCodexLink(journey, item) {
   const control = document.createElement("button");
   control.className = "codex-link";
   control.type = "button";
   control.textContent = "Codex link";
   control.title = `Copy Codex link for ${item.title}`;
   control.setAttribute("aria-label", control.title);
-  control.addEventListener("click", () => copyUrl(control, buildCodexUrl(project, item), "Codex link"));
+  control.addEventListener("click", () => copyUrl(control, buildCodexUrl(journey, item), "Codex link"));
   return control;
 }
 
@@ -111,7 +111,7 @@ function buildWorkItemHierarchy(workItems) {
   return { childrenByParent, referencedAncestors };
 }
 
-function renderSubtaskList(project, parentId, hierarchy) {
+function renderSubtaskList(journey, parentId, hierarchy) {
   const checklist = document.createElement("ul");
   checklist.className = "subtask-list";
   for (const child of hierarchy.childrenByParent.get(parentId) || []) {
@@ -132,55 +132,55 @@ function renderSubtaskList(project, parentId, hierarchy) {
     label.textContent = child.title;
     checklistItem.append(checkbox, label);
     if (isLocalAuthoringView) {
-      checklistItem.appendChild(createCodexLink(project, child));
+      checklistItem.appendChild(createCodexLink(journey, child));
     }
 
     const hasChildren = hierarchy.childrenByParent.has(child.id);
     const shouldExpand = ["active", "blocked"].includes(child.status)
       || hierarchy.referencedAncestors.has(child.id);
     if (hasChildren && shouldExpand) {
-      checklistItem.appendChild(renderSubtaskList(project, child.id, hierarchy));
+      checklistItem.appendChild(renderSubtaskList(journey, child.id, hierarchy));
     }
     checklist.appendChild(checklistItem);
   }
   return checklist;
 }
 
-function renderProject(project) {
+function renderJourney(journey) {
   const fragment = template.content.cloneNode(true);
   const hero = fragment.querySelector(".hero");
-  hero.dataset.status = project.status;
-  text(fragment, "[data-field='status']", project.status);
-  text(fragment, "[data-field='version']", `version ${project.version}`);
-  text(fragment, "[data-field='title']", project.title);
-  text(fragment, "[data-field='objective']", project.objective);
-  text(fragment, "[data-field='updated']", `Updated ${formatDate(project.updated_at)}`);
+  hero.dataset.status = journey.status;
+  text(fragment, "[data-field='status']", journey.status);
+  text(fragment, "[data-field='version']", `version ${journey.version}`);
+  text(fragment, "[data-field='title']", journey.title);
+  text(fragment, "[data-field='objective']", journey.objective);
+  text(fragment, "[data-field='updated']", `Updated ${formatDate(journey.updated_at)}`);
   const shareLink = fragment.querySelector("[data-action='share']");
-  const shareUrl = buildShareUrl(project);
+  const shareUrl = buildShareUrl(journey);
   shareLink.href = shareUrl;
-  shareLink.hidden = Boolean(sharedProject);
+  shareLink.hidden = Boolean(sharedJourney);
   shareLink.addEventListener("click", (event) => {
     event.preventDefault();
     copyUrl(shareLink, shareUrl, "Share");
   });
 
-  const projectLinks = project.links || [];
-  const projectLinksSection = fragment.querySelector("[data-section='project-links']");
-  const projectLinksList = fragment.querySelector("[data-list='project-links']");
-  if (projectLinks.length) {
-    projectLinksSection.hidden = false;
-    for (const link of projectLinks) {
+  const journeyLinks = journey.links || [];
+  const journeyLinksSection = fragment.querySelector("[data-section='journey-links']");
+  const journeyLinksList = fragment.querySelector("[data-list='journey-links']");
+  if (journeyLinks.length) {
+    journeyLinksSection.hidden = false;
+    for (const link of journeyLinks) {
       const anchor = document.createElement("a");
       anchor.href = link.url;
       anchor.target = "_blank";
       anchor.rel = "noreferrer";
       anchor.textContent = link.label;
-      projectLinksList.appendChild(anchor);
+      journeyLinksList.appendChild(anchor);
     }
   }
 
-  const topLevelItems = project.work_items.filter((item) => !item.parent_id);
-  const hierarchy = buildWorkItemHierarchy(project.work_items);
+  const topLevelItems = journey.work_items.filter((item) => !item.parent_id);
+  const hierarchy = buildWorkItemHierarchy(journey.work_items);
   const relevantItems = topLevelItems.filter((item) => item.status !== "abandoned");
   const completed = relevantItems.filter((item) => item.status === "complete").length;
   const progress = relevantItems.length ? Math.round((completed / relevantItems.length) * 100) : 0;
@@ -209,14 +209,14 @@ function renderProject(project) {
         element.setAttribute("aria-current", "true");
       }
       if (isLocalAuthoringView) {
-        element.appendChild(createCodexLink(project, item));
+        element.appendChild(createCodexLink(journey, item));
       }
 
       const hasChildren = hierarchy.childrenByParent.has(item.id);
       const shouldExpand = ["active", "blocked"].includes(item.status)
         || hierarchy.referencedAncestors.has(item.id);
       if (hasChildren && shouldExpand) {
-        element.querySelector("div").appendChild(renderSubtaskList(project, item.id, hierarchy));
+        element.querySelector("div").appendChild(renderSubtaskList(journey, item.id, hierarchy));
       }
 
       if (item.links?.length) {
@@ -240,7 +240,7 @@ function renderProject(project) {
   }
 
   const eventList = fragment.querySelector("[data-list='events']");
-  for (const event of project.recent_events.slice(0, 8)) {
+  for (const event of journey.recent_events.slice(0, 8)) {
     const element = document.createElement("div");
     element.className = "event";
     const summary = document.createElement("strong");
@@ -263,41 +263,41 @@ async function fetchJson(url) {
   return response.json();
 }
 
-async function loadProjects(preferredSlug = select.value) {
+async function loadJourneys(preferredSlug = select.value) {
   try {
-    const projects = await fetchJson("/api/projects");
-    const visibleProjects = projects.filter(
-      (project) => !["completed", "archived"].includes(project.status),
+    const journeys = await fetchJson("/api/journeys");
+    const visibleJourneys = journeys.filter(
+      (journey) => !["completed", "archived"].includes(journey.status),
     );
-    if (!visibleProjects.length) {
+    if (!visibleJourneys.length) {
       select.replaceChildren();
       renderEmpty(
-        "No current projects",
-        "Completed projects remain safely stored in Wander's history.",
+        "No current journeys",
+        "Completed journeys remain safely stored in Wander's history.",
       );
       return;
     }
-    select.replaceChildren(...visibleProjects.map((project) => {
+    select.replaceChildren(...visibleJourneys.map((journey) => {
       const option = document.createElement("option");
-      option.value = project.slug;
-      option.textContent = `${project.title} · ${project.status}`;
+      option.value = journey.slug;
+      option.textContent = `${journey.title} · ${journey.status}`;
       return option;
     }));
-    const selected = visibleProjects.some((project) => project.slug === preferredSlug)
+    const selected = visibleJourneys.some((journey) => journey.slug === preferredSlug)
       ? preferredSlug
-      : visibleProjects[0].slug;
+      : visibleJourneys[0].slug;
     select.value = selected;
-    await loadProject(selected);
+    await loadJourney(selected);
   } catch (error) {
     renderEmpty("Unable to load Wander", error.message);
   }
 }
 
-async function loadProject(slug) {
+async function loadJourney(slug) {
   try {
-    renderProject(await fetchJson(`/api/projects/${encodeURIComponent(slug)}`));
+    renderJourney(await fetchJson(`/api/journeys/${encodeURIComponent(slug)}`));
   } catch (error) {
-    renderEmpty("Unable to load project", error.message);
+    renderEmpty("Unable to load journey", error.message);
   }
 }
 
@@ -310,22 +310,22 @@ async function loadConfiguration() {
   }
 }
 
-select.addEventListener("change", () => loadProject(select.value));
+select.addEventListener("change", () => loadJourney(select.value));
 refreshButton.addEventListener("click", () => {
-  if (sharedProject) loadProject(sharedProject);
-  else loadProjects(select.value);
+  if (sharedJourney) loadJourney(sharedJourney);
+  else loadJourneys(select.value);
 });
 
 async function initialize() {
   await loadConfiguration();
-  if (sharedProject) {
+  if (sharedJourney) {
     select.hidden = true;
     selectLabel.hidden = true;
-    setInterval(() => loadProject(sharedProject), 15000);
-    loadProject(sharedProject);
+    setInterval(() => loadJourney(sharedJourney), 15000);
+    loadJourney(sharedJourney);
   } else {
-    setInterval(() => loadProjects(select.value), 15000);
-    loadProjects(requestedProject);
+    setInterval(() => loadJourneys(select.value), 15000);
+    loadJourneys(requestedJourney);
   }
 }
 

@@ -17,8 +17,8 @@ from wander.github_projection import (
 )
 
 
-PROJECT_STATUSES = {"active", "paused", "completed", "archived"}
-PROJECT_TRANSITIONS = {
+JOURNEY_STATUSES = {"active", "paused", "completed", "archived"}
+JOURNEY_TRANSITIONS = {
     "active": {"paused", "completed", "archived"},
     "paused": {"active", "completed", "archived"},
     "completed": {"archived"},
@@ -97,9 +97,10 @@ class WanderStore:
 
     def initialize(self) -> None:
         with self._connection() as connection:
+            self._migrate_project_schema(connection)
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS projects (
+                CREATE TABLE IF NOT EXISTS journeys (
                     id TEXT PRIMARY KEY,
                     slug TEXT NOT NULL UNIQUE,
                     title TEXT NOT NULL,
@@ -115,7 +116,7 @@ class WanderStore:
 
                 CREATE TABLE IF NOT EXISTS work_items (
                     id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     parent_id TEXT REFERENCES work_items(id),
                     sequence INTEGER NOT NULL,
                     title TEXT NOT NULL,
@@ -127,26 +128,26 @@ class WanderStore:
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS ix_work_items_project_sequence
-                    ON work_items(project_id, sequence);
+                CREATE INDEX IF NOT EXISTS ix_work_items_journey_sequence
+                    ON work_items(journey_id, sequence);
 
-                CREATE TABLE IF NOT EXISTS project_links (
+                CREATE TABLE IF NOT EXISTS journey_links (
                     id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     label TEXT NOT NULL,
                     url TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    UNIQUE(project_id, url)
+                    UNIQUE(journey_id, url)
                 );
 
-                CREATE INDEX IF NOT EXISTS ix_project_links_project_sequence
-                    ON project_links(project_id, sequence);
+                CREATE INDEX IF NOT EXISTS ix_journey_links_journey_sequence
+                    ON journey_links(journey_id, sequence);
 
                 CREATE TABLE IF NOT EXISTS work_item_links (
                     id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
                     label TEXT NOT NULL,
                     url TEXT NOT NULL,
@@ -160,17 +161,17 @@ class WanderStore:
 
                 CREATE TABLE IF NOT EXISTS thread_references (
                     id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     deep_link TEXT NOT NULL,
                     title TEXT NOT NULL,
                     role TEXT NOT NULL,
                     last_activity TEXT NOT NULL,
-                    UNIQUE(project_id, deep_link)
+                    UNIQUE(journey_id, deep_link)
                 );
 
                 CREATE TABLE IF NOT EXISTS checkpoints (
                     id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     current_model TEXT NOT NULL,
                     last_decision TEXT NOT NULL,
                     invariants TEXT NOT NULL,
@@ -180,12 +181,12 @@ class WanderStore:
                     created_at TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS ix_checkpoints_project_created
-                    ON checkpoints(project_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS ix_checkpoints_journey_created
+                    ON checkpoints(journey_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
                     operation TEXT NOT NULL,
                     before_version INTEGER NOT NULL,
                     after_version INTEGER NOT NULL,
@@ -195,17 +196,75 @@ class WanderStore:
                     created_at TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS ix_events_project_id
-                    ON events(project_id, id DESC);
+                CREATE INDEX IF NOT EXISTS ix_events_journey_id
+                    ON events(journey_id, id DESC);
                 """
             )
-            project_columns = {
+            journey_columns = {
                 row["name"]
-                for row in connection.execute("PRAGMA table_info(projects)").fetchall()
+                for row in connection.execute("PRAGMA table_info(journeys)").fetchall()
             }
-            if "owner_thread_id" not in project_columns:
-                connection.execute("ALTER TABLE projects ADD COLUMN owner_thread_id TEXT")
+            if "owner_thread_id" not in journey_columns:
+                connection.execute("ALTER TABLE journeys ADD COLUMN owner_thread_id TEXT")
+            connection.execute("PRAGMA user_version = 2")
             connection.commit()
+
+    @staticmethod
+    def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+            is not None
+        )
+
+    @classmethod
+    def _migrate_project_schema(cls, connection: sqlite3.Connection) -> None:
+        has_projects = cls._table_exists(connection, "projects")
+        has_journeys = cls._table_exists(connection, "journeys")
+        if not has_projects:
+            return
+        if has_journeys:
+            raise ConflictError(
+                "Wander database contains both legacy projects and journeys tables; "
+                "refusing to guess which ledger is authoritative"
+            )
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+
+                DROP INDEX IF EXISTS ix_work_items_project_sequence;
+                DROP INDEX IF EXISTS ix_project_links_project_sequence;
+                DROP INDEX IF EXISTS ix_checkpoints_project_created;
+                DROP INDEX IF EXISTS ix_events_project_id;
+
+                ALTER TABLE projects RENAME TO journeys;
+
+                ALTER TABLE work_items RENAME COLUMN project_id TO journey_id;
+                ALTER TABLE project_links RENAME TO journey_links;
+                ALTER TABLE journey_links RENAME COLUMN project_id TO journey_id;
+                ALTER TABLE work_item_links RENAME COLUMN project_id TO journey_id;
+                ALTER TABLE thread_references RENAME COLUMN project_id TO journey_id;
+                ALTER TABLE checkpoints RENAME COLUMN project_id TO journey_id;
+                ALTER TABLE events RENAME COLUMN project_id TO journey_id;
+
+                COMMIT;
+                """
+            )
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+        foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_key_errors:
+            raise ConflictError("Journey schema migration produced invalid foreign keys")
 
     @staticmethod
     def _required(value: str, field: str) -> str:
@@ -239,41 +298,41 @@ class WanderStore:
             )
         return normalized, path_parts[3][:12]
 
-    def _project_row(self, connection: sqlite3.Connection, project: str) -> sqlite3.Row:
+    def _journey_row(self, connection: sqlite3.Connection, journey: str) -> sqlite3.Row:
         row = connection.execute(
-            "SELECT * FROM projects WHERE id = ? OR slug = ?",
-            (project, project),
+            "SELECT * FROM journeys WHERE id = ? OR slug = ?",
+            (journey, journey),
         ).fetchone()
         if row is None:
-            raise NotFoundError(f"Project not found: {project}")
+            raise NotFoundError(f"Journey not found: {journey}")
         return row
 
-    def _locked_project(
+    def _locked_journey(
         self,
         connection: sqlite3.Connection,
-        project: str,
+        journey: str,
         expected_version: int,
     ) -> sqlite3.Row:
-        row = self._project_row(connection, project)
+        row = self._journey_row(connection, journey)
         if row["version"] != expected_version:
             raise ConflictError(
-                f"Stale project version for {row['slug']}: expected {expected_version}, "
+                f"Stale journey version for {row['slug']}: expected {expected_version}, "
                 f"current {row['version']}. Reload and reconcile before writing."
             )
         return row
 
-    def _writer_warning(self, project_row: sqlite3.Row) -> str:
+    def _writer_warning(self, journey_row: sqlite3.Row) -> str:
         if not self.writer_thread_id:
             return ""
-        if not project_row["owner_thread_id"]:
+        if not journey_row["owner_thread_id"]:
             return (
-                f"Project '{project_row['slug']}' has no designated writer thread. "
+                f"Journey '{journey_row['slug']}' has no designated writer thread. "
                 "The write succeeded, but consider claiming it to keep the work centered."
             )
-        if project_row["owner_thread_id"] != self.writer_thread_id:
-            owner_link = f"codex://threads/{project_row['owner_thread_id']}"
+        if journey_row["owner_thread_id"] != self.writer_thread_id:
+            owner_link = f"codex://threads/{journey_row['owner_thread_id']}"
             return (
-                f"Project '{project_row['slug']}' is centered in another Codex thread: "
+                f"Journey '{journey_row['slug']}' is centered in another Codex thread: "
                 f"{owner_link}. This write succeeded, but review that conversation to avoid drift."
             )
         return ""
@@ -281,31 +340,31 @@ class WanderStore:
     def _advance(
         self,
         connection: sqlite3.Connection,
-        project_row: sqlite3.Row,
+        journey_row: sqlite3.Row,
         operation: str,
         summary: str,
         evidence: str = "",
-        project_updates: dict[str, Any] | None = None,
+        journey_updates: dict[str, Any] | None = None,
     ) -> int:
-        before_version = project_row["version"]
+        before_version = journey_row["version"]
         after_version = before_version + 1
         now = utc_now()
         updates = {"version": after_version, "updated_at": now}
-        updates.update(project_updates or {})
+        updates.update(journey_updates or {})
         set_clause = ", ".join(f"{name} = ?" for name in updates)
         connection.execute(
-            f"UPDATE projects SET {set_clause} WHERE id = ?",  # noqa: S608 - column names are internal constants
-            (*updates.values(), project_row["id"]),
+            f"UPDATE journeys SET {set_clause} WHERE id = ?",  # noqa: S608 - column names are internal constants
+            (*updates.values(), journey_row["id"]),
         )
         connection.execute(
             """
             INSERT INTO events (
-                project_id, operation, before_version, after_version,
+                journey_id, operation, before_version, after_version,
                 summary, evidence, source_thread, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                project_row["id"],
+                journey_row["id"],
                 operation,
                 before_version,
                 after_version,
@@ -320,73 +379,73 @@ class WanderStore:
     def _mutation_result(
         self,
         connection: sqlite3.Connection,
-        project_id: str,
+        journey_id: str,
         operation: str,
         changed: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
-        project_row = connection.execute(
-            "SELECT * FROM projects WHERE id = ?",
-            (project_id,),
+        journey_row = connection.execute(
+            "SELECT * FROM journeys WHERE id = ?",
+            (journey_id,),
         ).fetchone()
-        if project_row is None:
-            raise NotFoundError(f"Project not found after mutation: {project_id}")
+        if journey_row is None:
+            raise NotFoundError(f"Journey not found after mutation: {journey_id}")
         return {
-            "project": project_row["slug"],
-            "version": project_row["version"],
+            "journey": journey_row["slug"],
+            "version": journey_row["version"],
             "operation": operation,
             "changed": {
                 entity: identifiers
                 for entity, identifiers in (changed or {}).items()
                 if identifiers
             },
-            "writer_warning": self._writer_warning(project_row),
+            "writer_warning": self._writer_warning(journey_row),
         }
 
-    def create_project(self, slug: str, title: str, objective: str) -> dict[str, Any]:
+    def create_journey(self, slug: str, title: str, objective: str) -> dict[str, Any]:
         if not self.writer_thread_id:
-            raise OwnershipError("CODEX_THREAD_ID is required to create a project")
+            raise OwnershipError("CODEX_THREAD_ID is required to create a journey")
         slug = slug.strip().lower()
         if not SLUG_PATTERN.fullmatch(slug):
             raise ValidationError("slug must contain lowercase letters, digits, and single hyphens")
         title = self._required(title, "title")
         objective = self._required(objective, "objective")
-        project_id = str(uuid.uuid4())
+        journey_id = str(uuid.uuid4())
         now = utc_now()
         with self._connection() as connection:
             try:
                 connection.execute(
                     """
-                    INSERT INTO projects (
+                    INSERT INTO journeys (
                         id, slug, title, objective, status, owner_thread_id,
                         version, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, 'active', ?, 1, ?, ?)
                     """,
-                    (project_id, slug, title, objective, self.writer_thread_id, now, now),
+                    (journey_id, slug, title, objective, self.writer_thread_id, now, now),
                 )
             except sqlite3.IntegrityError as error:
-                raise ConflictError(f"A project with slug '{slug}' already exists") from error
+                raise ConflictError(f"A journey with slug '{slug}' already exists") from error
             connection.execute(
                 """
                 INSERT INTO events (
-                    project_id, operation, before_version, after_version,
+                    journey_id, operation, before_version, after_version,
                     summary, source_thread, created_at
-                ) VALUES (?, 'project.created', 0, 1, ?, ?, ?)
+                ) VALUES (?, 'journey.created', 0, 1, ?, ?, ?)
                 """,
-                (project_id, f"Created project: {title}", self.writer_thread_link, now),
+                (journey_id, f"Created journey: {title}", self.writer_thread_link, now),
             )
             result = self._mutation_result(
                 connection,
-                project_id,
-                "project.created",
-                {"project_ids": [project_id]},
+                journey_id,
+                "journey.created",
+                {"journey_ids": [journey_id]},
             )
             connection.commit()
         return result
 
-    def list_projects(self, status: str | None = None) -> list[dict[str, Any]]:
-        if status is not None and status not in PROJECT_STATUSES:
-            raise ValidationError(f"Unknown project status: {status}")
-        query = "SELECT * FROM projects"
+    def list_journeys(self, status: str | None = None) -> list[dict[str, Any]]:
+        if status is not None and status not in JOURNEY_STATUSES:
+            raise ValidationError(f"Unknown journey status: {status}")
+        query = "SELECT * FROM journeys"
         parameters: tuple[Any, ...] = ()
         if status is not None:
             query += " WHERE status = ?"
@@ -395,26 +454,26 @@ class WanderStore:
         with self._connection() as connection:
             return [dict(row) for row in connection.execute(query, parameters).fetchall()]
 
-    def get_project(self, project: str) -> dict[str, Any]:
+    def get_journey(self, journey: str) -> dict[str, Any]:
         with self._connection() as connection:
-            project_row = self._project_row(connection, project)
-            result = dict(project_row)
-            result["writer_warning"] = self._writer_warning(project_row)
+            journey_row = self._journey_row(connection, journey)
+            result = dict(journey_row)
+            result["writer_warning"] = self._writer_warning(journey_row)
             result["work_items"] = [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM work_items WHERE project_id = ? ORDER BY sequence, created_at",
-                    (project_row["id"],),
+                    "SELECT * FROM work_items WHERE journey_id = ? ORDER BY sequence, created_at",
+                    (journey_row["id"],),
                 ).fetchall()
             ]
             links_by_item: dict[str, list[dict[str, Any]]] = {}
             for row in connection.execute(
                 """
                 SELECT * FROM work_item_links
-                WHERE project_id = ?
+                WHERE journey_id = ?
                 ORDER BY sequence, created_at
                 """,
-                (project_row["id"],),
+                (journey_row["id"],),
             ).fetchall():
                 link = dict(row)
                 links_by_item.setdefault(link["work_item_id"], []).append(link)
@@ -423,41 +482,41 @@ class WanderStore:
             result["links"] = [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM project_links WHERE project_id = ? ORDER BY sequence, created_at",
-                    (project_row["id"],),
+                    "SELECT * FROM journey_links WHERE journey_id = ? ORDER BY sequence, created_at",
+                    (journey_row["id"],),
                 ).fetchall()
             ]
             result["threads"] = [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM thread_references WHERE project_id = ? ORDER BY last_activity DESC",
-                    (project_row["id"],),
+                    "SELECT * FROM thread_references WHERE journey_id = ? ORDER BY last_activity DESC",
+                    (journey_row["id"],),
                 ).fetchall()
             ]
             result["latest_checkpoint"] = self._dict(
                 connection.execute(
                     """
                     SELECT * FROM checkpoints
-                    WHERE project_id = ?
+                    WHERE journey_id = ?
                     ORDER BY created_at DESC, rowid DESC
                     LIMIT 1
                     """,
-                    (project_row["id"],),
+                    (journey_row["id"],),
                 ).fetchone()
             )
             result["recent_events"] = [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM events WHERE project_id = ? ORDER BY id DESC LIMIT 20",
-                    (project_row["id"],),
+                    "SELECT * FROM events WHERE journey_id = ? ORDER BY id DESC LIMIT 20",
+                    (journey_row["id"],),
                 ).fetchall()
             ]
             return result
 
-    def get_resume_context(self, project: str) -> dict[str, Any]:
-        detail = self.get_project(project)
+    def get_resume_context(self, journey: str) -> dict[str, Any]:
+        detail = self.get_journey(journey)
         return {
-            "project": {
+            "journey": {
                 key: detail[key]
                 for key in (
                     "id",
@@ -482,78 +541,78 @@ class WanderStore:
             "threads": detail["threads"],
         }
 
-    def claim_project(self, project: str, expected_version: int) -> dict[str, Any]:
+    def claim_journey(self, journey: str, expected_version: int) -> dict[str, Any]:
         if not self.writer_thread_id:
             raise OwnershipError(
                 "CODEX_THREAD_ID is unavailable. Supply a supported Codex deep link "
-                "through the launcher before claiming this project."
+                "through the launcher before claiming this journey."
             )
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._project_row(connection, project)
-            if project_row["version"] != expected_version:
+            journey_row = self._journey_row(connection, journey)
+            if journey_row["version"] != expected_version:
                 raise ConflictError(
-                    f"Stale project version for {project_row['slug']}: expected "
-                    f"{expected_version}, current {project_row['version']}."
+                    f"Stale journey version for {journey_row['slug']}: expected "
+                    f"{expected_version}, current {journey_row['version']}."
                 )
-            if project_row["owner_thread_id"]:
-                if project_row["owner_thread_id"] == self.writer_thread_id:
+            if journey_row["owner_thread_id"]:
+                if journey_row["owner_thread_id"] == self.writer_thread_id:
                     result = self._mutation_result(
                         connection,
-                        project_row["id"],
-                        "project.claimed",
+                        journey_row["id"],
+                        "journey.claimed",
                     )
                     connection.rollback()
                     return result
-                owner_link = f"codex://threads/{project_row['owner_thread_id']}"
+                owner_link = f"codex://threads/{journey_row['owner_thread_id']}"
                 raise OwnershipError(
-                    f"Project '{project_row['slug']}' is already owned by {owner_link}."
+                    f"Journey '{journey_row['slug']}' is already owned by {owner_link}."
                 )
             self._advance(
                 connection,
-                project_row,
-                "project.claimed",
-                "Claimed project writer ownership",
-                project_updates={"owner_thread_id": self.writer_thread_id},
+                journey_row,
+                "journey.claimed",
+                "Claimed journey writer ownership",
+                journey_updates={"owner_thread_id": self.writer_thread_id},
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
-                "project.claimed",
-                {"project_ids": [project_row["id"]]},
+                journey_row["id"],
+                "journey.claimed",
+                {"journey_ids": [journey_row["id"]]},
             )
             connection.commit()
         return result
 
-    def release_project(
+    def release_journey(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         reason: str,
     ) -> dict[str, Any]:
         reason = self._required(reason, "reason")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             self._advance(
                 connection,
-                project_row,
-                "project.released",
-                f"Released project writer ownership: {reason}",
-                project_updates={"owner_thread_id": None},
+                journey_row,
+                "journey.released",
+                f"Released journey writer ownership: {reason}",
+                journey_updates={"owner_thread_id": None},
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
-                "project.released",
-                {"project_ids": [project_row["id"]]},
+                journey_row["id"],
+                "journey.released",
+                {"journey_ids": [journey_row["id"]]},
             )
             connection.commit()
         return result
 
-    def add_project_link(
+    def add_journey_link(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         label: str,
         url: str,
@@ -567,23 +626,23 @@ class WanderStore:
         now = utc_now()
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             link_id = str(uuid.uuid4())
             if sequence is None:
                 sequence = connection.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) + 10 FROM project_links WHERE project_id = ?",
-                    (project_row["id"],),
+                    "SELECT COALESCE(MAX(sequence), 0) + 10 FROM journey_links WHERE journey_id = ?",
+                    (journey_row["id"],),
                 ).fetchone()[0]
             try:
                 connection.execute(
                     """
-                    INSERT INTO project_links (
-                        id, project_id, label, url, sequence, created_at, updated_at
+                    INSERT INTO journey_links (
+                        id, journey_id, label, url, sequence, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         link_id,
-                        project_row["id"],
+                        journey_row["id"],
                         label,
                         url,
                         sequence,
@@ -592,26 +651,26 @@ class WanderStore:
                     ),
                 )
             except sqlite3.IntegrityError as error:
-                raise ConflictError(f"Project link already exists: {url}") from error
+                raise ConflictError(f"Journey link already exists: {url}") from error
             self._advance(
                 connection,
-                project_row,
-                "project_link.added",
-                f"Added project link: {label}",
+                journey_row,
+                "journey_link.added",
+                f"Added journey link: {label}",
                 evidence=url,
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
-                "project_link.added",
-                {"project_link_ids": [link_id]},
+                journey_row["id"],
+                "journey_link.added",
+                {"journey_link_ids": [link_id]},
             )
             connection.commit()
         return result
 
-    def remove_project_link(
+    def remove_journey_link(
         self,
-        project: str,
+        journey: str,
         link_id: str,
         expected_version: int,
         reason: str,
@@ -619,43 +678,43 @@ class WanderStore:
         reason = self._required(reason, "reason")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             link = connection.execute(
-                "SELECT * FROM project_links WHERE id = ? AND project_id = ?",
-                (link_id, project_row["id"]),
+                "SELECT * FROM journey_links WHERE id = ? AND journey_id = ?",
+                (link_id, journey_row["id"]),
             ).fetchone()
             if link is None:
-                raise NotFoundError(f"Project link not found in project: {link_id}")
-            connection.execute("DELETE FROM project_links WHERE id = ?", (link_id,))
+                raise NotFoundError(f"Journey link not found in journey: {link_id}")
+            connection.execute("DELETE FROM journey_links WHERE id = ?", (link_id,))
             self._advance(
                 connection,
-                project_row,
-                "project_link.removed",
-                f"Removed project link '{link['label']}': {reason}",
+                journey_row,
+                "journey_link.removed",
+                f"Removed journey link '{link['label']}': {reason}",
                 evidence=link["url"],
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
-                "project_link.removed",
-                {"project_link_ids": [link_id]},
+                journey_row["id"],
+                "journey_link.removed",
+                {"journey_link_ids": [link_id]},
             )
             connection.commit()
         return result
 
     def prepare_github_issue_projection(
         self,
-        project: str,
+        journey: str,
         workboard_url: str = "",
     ) -> dict[str, Any]:
         try:
-            return build_github_issue_projection(self.get_project(project), workboard_url)
+            return build_github_issue_projection(self.get_journey(journey), workboard_url)
         except GitHubProjectionError as error:
             raise ValidationError(str(error)) from error
 
     def register_github_projection_comment(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         comment_url: str,
     ) -> dict[str, Any]:
@@ -665,10 +724,10 @@ class WanderStore:
                 "comment_url must have the form "
                 "https://github.com/<owner>/<repository>/issues/<number>#issuecomment-<id>"
             )
-        projection = self.prepare_github_issue_projection(project)
+        projection = self.prepare_github_issue_projection(journey)
         issue = projection["issue"]
         if projection["comment"] is not None:
-            raise ConflictError("project already has a Wander projection comment")
+            raise ConflictError("journey already has a Wander projection comment")
         if (
             comment["owner"].casefold() != issue["owner"].casefold()
             or comment["repo"].casefold() != issue["repo"].casefold()
@@ -677,8 +736,8 @@ class WanderStore:
             raise ValidationError(
                 "projection comment must belong to the configured GitHub issue"
             )
-        return self.add_project_link(
-            project,
+        return self.add_journey_link(
+            journey,
             expected_version,
             PROJECTION_LINK_LABEL,
             comment_url,
@@ -686,7 +745,7 @@ class WanderStore:
 
     def add_work_item(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         title: str,
         completion_criteria: str = "",
@@ -699,29 +758,29 @@ class WanderStore:
         now = utc_now()
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             if parent_id:
                 parent = connection.execute(
-                    "SELECT project_id FROM work_items WHERE id = ?",
+                    "SELECT journey_id FROM work_items WHERE id = ?",
                     (parent_id,),
                 ).fetchone()
-                if parent is None or parent["project_id"] != project_row["id"]:
-                    raise ValidationError("parent_id must identify a work item in the same project")
+                if parent is None or parent["journey_id"] != journey_row["id"]:
+                    raise ValidationError("parent_id must identify a work item in the same journey")
             if sequence is None:
                 sequence = connection.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) + 10 FROM work_items WHERE project_id = ?",
-                    (project_row["id"],),
+                    "SELECT COALESCE(MAX(sequence), 0) + 10 FROM work_items WHERE journey_id = ?",
+                    (journey_row["id"],),
                 ).fetchone()[0]
             connection.execute(
                 """
                 INSERT INTO work_items (
-                    id, project_id, parent_id, sequence, title, status,
+                    id, journey_id, parent_id, sequence, title, status,
                     completion_criteria, notes, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
                 """,
                 (
                     item_id,
-                    project_row["id"],
+                    journey_row["id"],
                     parent_id,
                     sequence,
                     title,
@@ -733,13 +792,13 @@ class WanderStore:
             )
             self._advance(
                 connection,
-                project_row,
+                journey_row,
                 "work_item.added",
                 f"Added work item: {title}",
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
+                journey_row["id"],
                 "work_item.added",
                 {"work_item_ids": [item_id]},
             )
@@ -748,7 +807,7 @@ class WanderStore:
 
     def _transition_item(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         target_status: str,
@@ -764,13 +823,13 @@ class WanderStore:
         commit_links = [self._github_commit_link(url) for url in (commit_urls or [])]
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             item = connection.execute(
-                "SELECT * FROM work_items WHERE id = ? AND project_id = ?",
-                (item_id, project_row["id"]),
+                "SELECT * FROM work_items WHERE id = ? AND journey_id = ?",
+                (item_id, journey_row["id"]),
             ).fetchone()
             if item is None:
-                raise NotFoundError(f"Work item not found in project: {item_id}")
+                raise NotFoundError(f"Work item not found in journey: {item_id}")
             if target_status not in ITEM_TRANSITIONS[item["status"]]:
                 raise ValidationError(
                     f"Invalid work item transition: {item['status']} -> {target_status}"
@@ -807,13 +866,13 @@ class WanderStore:
                     connection.execute(
                         """
                         INSERT INTO work_item_links (
-                            id, project_id, work_item_id, label, url,
+                            id, journey_id, work_item_id, label, url,
                             sequence, created_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             link_id,
-                            project_row["id"],
+                            journey_row["id"],
                             item_id,
                             label,
                             url,
@@ -834,7 +893,7 @@ class WanderStore:
             )
             self._advance(
                 connection,
-                project_row,
+                journey_row,
                 f"work_item.{target_status}",
                 summary,
                 evidence=evidence,
@@ -844,7 +903,7 @@ class WanderStore:
                 changed["work_item_link_ids"] = created_link_ids
             result = self._mutation_result(
                 connection,
-                project_row["id"],
+                journey_row["id"],
                 f"work_item.{target_status}",
                 changed,
             )
@@ -853,13 +912,13 @@ class WanderStore:
 
     def start_work_item(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         summary: str,
     ) -> dict[str, Any]:
         return self._transition_item(
-            project,
+            journey,
             item_id,
             expected_version,
             "active",
@@ -868,7 +927,7 @@ class WanderStore:
 
     def complete_work_item(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         evidence: str,
@@ -876,7 +935,7 @@ class WanderStore:
         commit_urls: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._transition_item(
-            project,
+            journey,
             item_id,
             expected_version,
             "complete",
@@ -887,7 +946,7 @@ class WanderStore:
 
     def add_work_item_link(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         commit_url: str,
@@ -895,13 +954,13 @@ class WanderStore:
         commit_url, label = self._github_commit_link(commit_url)
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             item = connection.execute(
-                "SELECT * FROM work_items WHERE id = ? AND project_id = ?",
-                (item_id, project_row["id"]),
+                "SELECT * FROM work_items WHERE id = ? AND journey_id = ?",
+                (item_id, journey_row["id"]),
             ).fetchone()
             if item is None:
-                raise NotFoundError(f"Work item not found in project: {item_id}")
+                raise NotFoundError(f"Work item not found in journey: {item_id}")
             if item["status"] != "complete":
                 raise ValidationError("commit links may only be added to completed work items")
             sequence = connection.execute(
@@ -917,13 +976,13 @@ class WanderStore:
                 connection.execute(
                     """
                     INSERT INTO work_item_links (
-                        id, project_id, work_item_id, label, url,
+                        id, journey_id, work_item_id, label, url,
                         sequence, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         link_id,
-                        project_row["id"],
+                        journey_row["id"],
                         item_id,
                         label,
                         commit_url,
@@ -937,14 +996,14 @@ class WanderStore:
                 ) from error
             self._advance(
                 connection,
-                project_row,
+                journey_row,
                 "work_item_link.added",
                 f"Attached commit {label} to work item: {item['title']}",
                 evidence=commit_url,
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
+                journey_row["id"],
                 "work_item_link.added",
                 {"work_item_link_ids": [link_id]},
             )
@@ -953,14 +1012,14 @@ class WanderStore:
 
     def block_work_item(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         reason: str,
     ) -> dict[str, Any]:
         reason = self._required(reason, "reason")
         return self._transition_item(
-            project,
+            journey,
             item_id,
             expected_version,
             "blocked",
@@ -970,14 +1029,14 @@ class WanderStore:
 
     def abandon_work_item(
         self,
-        project: str,
+        journey: str,
         item_id: str,
         expected_version: int,
         reason: str,
     ) -> dict[str, Any]:
         reason = self._required(reason, "reason")
         return self._transition_item(
-            project,
+            journey,
             item_id,
             expected_version,
             "abandoned",
@@ -987,7 +1046,7 @@ class WanderStore:
 
     def record_checkpoint(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         current_summary: str,
         current_phase: str,
@@ -1003,19 +1062,19 @@ class WanderStore:
         resume_here = self._required(resume_here, "resume_here")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             now = utc_now()
             checkpoint_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO checkpoints (
-                    id, project_id, current_model, last_decision, invariants,
+                    id, journey_id, current_model, last_decision, invariants,
                     open_questions, resume_here, source_thread, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     checkpoint_id,
-                    project_row["id"],
+                    journey_row["id"],
                     current_model,
                     last_decision.strip(),
                     invariants.strip(),
@@ -1027,17 +1086,17 @@ class WanderStore:
             )
             self._advance(
                 connection,
-                project_row,
+                journey_row,
                 "checkpoint.recorded",
                 current_summary,
-                project_updates={
+                journey_updates={
                     "current_summary": current_summary,
                     "current_phase": current_phase,
                 },
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
+                journey_row["id"],
                 "checkpoint.recorded",
                 {"checkpoint_ids": [checkpoint_id]},
             )
@@ -1046,7 +1105,7 @@ class WanderStore:
 
     def attach_thread(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         deep_link: str,
         title: str,
@@ -1059,22 +1118,22 @@ class WanderStore:
         role = self._required(role, "role")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
+            journey_row = self._locked_journey(connection, journey, expected_version)
             now = utc_now()
             candidate_thread_reference_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO thread_references (
-                    id, project_id, deep_link, title, role, last_activity
+                    id, journey_id, deep_link, title, role, last_activity
                 ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(project_id, deep_link) DO UPDATE SET
+                ON CONFLICT(journey_id, deep_link) DO UPDATE SET
                     title = excluded.title,
                     role = excluded.role,
                     last_activity = excluded.last_activity
                 """,
                 (
                     candidate_thread_reference_id,
-                    project_row["id"],
+                    journey_row["id"],
                     deep_link,
                     title,
                     role,
@@ -1084,58 +1143,58 @@ class WanderStore:
             thread_reference_row = connection.execute(
                 """
                 SELECT id FROM thread_references
-                WHERE project_id = ? AND deep_link = ?
+                WHERE journey_id = ? AND deep_link = ?
                 """,
-                (project_row["id"], deep_link),
+                (journey_row["id"], deep_link),
             ).fetchone()
             self._advance(
                 connection,
-                project_row,
+                journey_row,
                 "thread.attached",
                 f"Attached Codex thread: {title}",
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
+                journey_row["id"],
                 "thread.attached",
                 {"thread_reference_ids": [thread_reference_row["id"]]},
             )
             connection.commit()
         return result
 
-    def set_project_status(
+    def set_journey_status(
         self,
-        project: str,
+        journey: str,
         expected_version: int,
         status: str,
         summary: str,
         evidence: str = "",
     ) -> dict[str, Any]:
-        if status not in PROJECT_STATUSES:
-            raise ValidationError(f"Unknown project status: {status}")
+        if status not in JOURNEY_STATUSES:
+            raise ValidationError(f"Unknown journey status: {status}")
         summary = self._required(summary, "summary")
         if status == "completed" and not evidence.strip():
             raise ValidationError("completion evidence is required")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            project_row = self._locked_project(connection, project, expected_version)
-            if status not in PROJECT_TRANSITIONS[project_row["status"]]:
+            journey_row = self._locked_journey(connection, journey, expected_version)
+            if status not in JOURNEY_TRANSITIONS[journey_row["status"]]:
                 raise ValidationError(
-                    f"Invalid project transition: {project_row['status']} -> {status}"
+                    f"Invalid journey transition: {journey_row['status']} -> {status}"
                 )
             self._advance(
                 connection,
-                project_row,
-                f"project.{status}",
+                journey_row,
+                f"journey.{status}",
                 summary,
                 evidence=evidence,
-                project_updates={"status": status, "current_summary": summary},
+                journey_updates={"status": status, "current_summary": summary},
             )
             result = self._mutation_result(
                 connection,
-                project_row["id"],
-                f"project.{status}",
-                {"project_ids": [project_row["id"]]},
+                journey_row["id"],
+                f"journey.{status}",
+                {"journey_ids": [journey_row["id"]]},
             )
             connection.commit()
         return result
