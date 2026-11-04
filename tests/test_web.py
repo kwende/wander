@@ -19,7 +19,7 @@ class ReadOnlyDashboardTests(unittest.TestCase):
             Path(self.temporary_directory.name) / "wander.db",
             "test-thread",
         )
-        self.store.create_project("wander", "Wander", "Keep durable project state.")
+        self.store.create_journey("wander", "Wander", "Keep durable journey state.")
         self.server = create_server(
             "127.0.0.1",
             0,
@@ -36,18 +36,23 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.temporary_directory.cleanup()
 
-    def test_project_api_is_readable(self) -> None:
-        project = self.store.get_project("wander")
-        self.store.add_project_link(
+    def test_journey_api_is_readable(self) -> None:
+        journey = self.store.get_journey("wander")
+        self.store.add_journey_link(
             "wander",
-            project["version"],
+            journey["version"],
             "Issue",
             "https://github.com/kwende/wander/issues/1",
         )
-        with urllib.request.urlopen(f"{self.base_url}/api/projects/wander") as response:
+        with urllib.request.urlopen(f"{self.base_url}/api/journeys/wander") as response:
             result = json.load(response)
         self.assertEqual("Wander", result["title"])
         self.assertEqual("Issue", result["links"][0]["label"])
+
+    def test_legacy_project_api_is_readable(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/projects/wander") as response:
+            result = json.load(response)
+        self.assertEqual("Wander", result["title"])
 
     def test_health_advertises_network_share_base_url(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/api/health") as response:
@@ -64,7 +69,7 @@ class ReadOnlyDashboardTests(unittest.TestCase):
 
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
-            f"{self.base_url}/api/projects",
+            f"{self.base_url}/api/journeys",
             method="POST",
             data=b"{}",
         )

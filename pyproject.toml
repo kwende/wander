@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wander-workboard"
-version = "0.6.0"
-description = "A durable, MCP-managed workboard for Codex projects"
+version = "0.7.0"
+description = "A durable, MCP-managed workboard for Codex journeys"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

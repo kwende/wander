@@ -36,11 +36,11 @@ def current_thread_id() -> str | None:
 store = WanderStore(default_database_path(), current_thread_id())
 mcp = MCPServer(
     "wander",
-    version="0.6.0",
+    version="0.7.0",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before work. "
         "Identify the current Codex thread before the first mutation. "
-        "Pass the last-read project version to every mutation. Record evidence before completion. "
+        "Pass the last-read journey version to every mutation. Record evidence before completion. "
         "Mutation results are compact deltas; chain writes with their returned version. "
         "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
     ),
@@ -48,21 +48,21 @@ mcp = MCPServer(
 
 
 @mcp.tool()
-def list_projects(status: str | None = None) -> list[dict[str, Any]]:
-    """List projects, optionally filtered by active, paused, completed, or archived."""
-    return store.list_projects(status)
+def list_journeys(status: str | None = None) -> list[dict[str, Any]]:
+    """List journeys, optionally filtered by active, paused, completed, or archived."""
+    return store.list_journeys(status)
 
 
 @mcp.tool()
-def get_project(project: str) -> dict[str, Any]:
-    """Get the full project ledger, including work items, threads, checkpoint, and events."""
-    return store.get_project(project)
+def get_journey(journey: str) -> dict[str, Any]:
+    """Get the full journey ledger, including work items, threads, checkpoint, and events."""
+    return store.get_journey(journey)
 
 
 @mcp.tool()
-def get_resume_context(project: str) -> dict[str, Any]:
-    """Get compact state needed to resume a project without reanalyzing its entire history."""
-    return store.get_resume_context(project)
+def get_resume_context(journey: str) -> dict[str, Any]:
+    """Get compact state needed to resume a journey without reanalyzing its entire history."""
+    return store.get_resume_context(journey)
 
 
 @mcp.tool()
@@ -72,64 +72,64 @@ def identify_thread(deep_link: str) -> dict[str, str]:
 
 
 @mcp.tool()
-def create_project(slug: str, title: str, objective: str) -> dict[str, Any]:
-    """Create an active project. Slugs use lowercase letters, digits, and hyphens."""
-    return store.create_project(slug, title, objective)
+def create_journey(slug: str, title: str, objective: str) -> dict[str, Any]:
+    """Create an active journey. Slugs use lowercase letters, digits, and hyphens."""
+    return store.create_journey(slug, title, objective)
 
 
 @mcp.tool()
-def claim_project(project: str, expected_version: int) -> dict[str, Any]:
-    """Designate this Codex thread as the project's center. Existing ownership is preserved."""
-    return store.claim_project(project, expected_version)
+def claim_journey(journey: str, expected_version: int) -> dict[str, Any]:
+    """Designate this Codex thread as the journey's center. Existing ownership is preserved."""
+    return store.claim_journey(journey, expected_version)
 
 
 @mcp.tool()
-def release_project(project: str, expected_version: int, reason: str) -> dict[str, Any]:
-    """Clear the writer-thread indicator so another Codex thread may claim the project."""
-    return store.release_project(project, expected_version, reason)
+def release_journey(journey: str, expected_version: int, reason: str) -> dict[str, Any]:
+    """Clear the writer-thread indicator so another Codex thread may claim the journey."""
+    return store.release_journey(journey, expected_version, reason)
 
 
 @mcp.tool()
-def add_project_link(
-    project: str,
+def add_journey_link(
+    journey: str,
     expected_version: int,
     label: str,
     url: str,
     sequence: int | None = None,
 ) -> dict[str, Any]:
     """Add an ordered http(s) reference such as an issue, pull request, or build."""
-    return store.add_project_link(project, expected_version, label, url, sequence)
+    return store.add_journey_link(journey, expected_version, label, url, sequence)
 
 
 @mcp.tool()
-def remove_project_link(
-    project: str,
+def remove_journey_link(
+    journey: str,
     link_id: str,
     expected_version: int,
     reason: str,
 ) -> dict[str, Any]:
-    """Remove an obsolete project reference while preserving the reason in history."""
-    return store.remove_project_link(project, link_id, expected_version, reason)
+    """Remove an obsolete journey reference while preserving the reason in history."""
+    return store.remove_journey_link(journey, link_id, expected_version, reason)
 
 
 @mcp.tool()
 def prepare_github_issue_projection(
-    project: str,
+    journey: str,
     workboard_url: str = "",
 ) -> dict[str, Any]:
     """Render the authoritative one-way GitHub issue-comment projection plan."""
-    return store.prepare_github_issue_projection(project, workboard_url)
+    return store.prepare_github_issue_projection(journey, workboard_url)
 
 
 @mcp.tool()
 def register_github_projection_comment(
-    project: str,
+    journey: str,
     expected_version: int,
     comment_url: str,
 ) -> dict[str, Any]:
-    """Record the one GitHub issue comment owned by this Wander project."""
+    """Record the one GitHub issue comment owned by this Wander journey."""
     return store.register_github_projection_comment(
-        project,
+        journey,
         expected_version,
         comment_url,
     )
@@ -137,7 +137,7 @@ def register_github_projection_comment(
 
 @mcp.tool()
 def add_work_item(
-    project: str,
+    journey: str,
     expected_version: int,
     title: str,
     completion_criteria: str = "",
@@ -145,9 +145,9 @@ def add_work_item(
     parent_id: str | None = None,
     sequence: int | None = None,
 ) -> dict[str, Any]:
-    """Add a pending work item while rejecting stale project state."""
+    """Add a pending work item while rejecting stale journey state."""
     return store.add_work_item(
-        project,
+        journey,
         expected_version,
         title,
         completion_criteria,
@@ -159,18 +159,18 @@ def add_work_item(
 
 @mcp.tool()
 def start_work_item(
-    project: str,
+    journey: str,
     item_id: str,
     expected_version: int,
     summary: str,
 ) -> dict[str, Any]:
     """Move a pending or blocked work item to active."""
-    return store.start_work_item(project, item_id, expected_version, summary)
+    return store.start_work_item(journey, item_id, expected_version, summary)
 
 
 @mcp.tool()
 def complete_work_item(
-    project: str,
+    journey: str,
     item_id: str,
     expected_version: int,
     evidence: str,
@@ -179,7 +179,7 @@ def complete_work_item(
 ) -> dict[str, Any]:
     """Complete an active item and atomically attach any relevant GitHub commits."""
     return store.complete_work_item(
-        project,
+        journey,
         item_id,
         expected_version,
         evidence,
@@ -190,40 +190,40 @@ def complete_work_item(
 
 @mcp.tool()
 def add_work_item_link(
-    project: str,
+    journey: str,
     item_id: str,
     expected_version: int,
     commit_url: str,
 ) -> dict[str, Any]:
     """Attach a GitHub commit discovered after a work item was completed."""
-    return store.add_work_item_link(project, item_id, expected_version, commit_url)
+    return store.add_work_item_link(journey, item_id, expected_version, commit_url)
 
 
 @mcp.tool()
 def block_work_item(
-    project: str,
+    journey: str,
     item_id: str,
     expected_version: int,
     reason: str,
 ) -> dict[str, Any]:
     """Mark an active item blocked and preserve the reason."""
-    return store.block_work_item(project, item_id, expected_version, reason)
+    return store.block_work_item(journey, item_id, expected_version, reason)
 
 
 @mcp.tool()
 def abandon_work_item(
-    project: str,
+    journey: str,
     item_id: str,
     expected_version: int,
     reason: str,
 ) -> dict[str, Any]:
     """Abandon a pending, active, or blocked item without deleting its history."""
-    return store.abandon_work_item(project, item_id, expected_version, reason)
+    return store.abandon_work_item(journey, item_id, expected_version, reason)
 
 
 @mcp.tool()
 def record_checkpoint(
-    project: str,
+    journey: str,
     expected_version: int,
     current_summary: str,
     current_phase: str,
@@ -235,7 +235,7 @@ def record_checkpoint(
 ) -> dict[str, Any]:
     """Record a compact context-rehydration checkpoint after a meaningful work batch."""
     return store.record_checkpoint(
-        project,
+        journey,
         expected_version,
         current_summary,
         current_phase,
@@ -249,19 +249,19 @@ def record_checkpoint(
 
 @mcp.tool()
 def attach_thread(
-    project: str,
+    journey: str,
     expected_version: int,
     deep_link: str,
     title: str,
     role: str,
 ) -> dict[str, Any]:
     """Attach or refresh a supported codex://threads/<thread-id> reference."""
-    return store.attach_thread(project, expected_version, deep_link, title, role)
+    return store.attach_thread(journey, expected_version, deep_link, title, role)
 
 
 @mcp.tool()
 def attach_current_thread(
-    project: str,
+    journey: str,
     expected_version: int,
     title: str,
     role: str,
@@ -273,7 +273,7 @@ def attach_current_thread(
             "codex://threads/<thread-id> deep link and use attach_thread instead."
         )
     return store.attach_thread(
-        project,
+        journey,
         expected_version,
         store.writer_thread_link,
         title,
@@ -282,16 +282,16 @@ def attach_current_thread(
 
 
 @mcp.tool()
-def set_project_status(
-    project: str,
+def set_journey_status(
+    journey: str,
     expected_version: int,
     status: str,
     summary: str,
     evidence: str = "",
 ) -> dict[str, Any]:
-    """Set project status. Completing a project requires evidence."""
-    return store.set_project_status(
-        project,
+    """Set journey status. Completing a journey requires evidence."""
+    return store.set_journey_status(
+        journey,
         expected_version,
         status,
         summary,
