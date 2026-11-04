@@ -383,6 +383,7 @@ function renderJauntList() {
 async function loadJaunts(preferredId = selectedJaunt?.id) {
   try {
     loadedJaunts = await fetchJson("/api/jaunts");
+    jauntMessage.textContent = "";
     renderJauntList();
     if (preferredId && loadedJaunts.some((jaunt) => jaunt.id === preferredId)) {
       await selectJaunt(preferredId);
