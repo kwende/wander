@@ -6,14 +6,14 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from wander.store import ConflictError, OwnershipError, ValidationError, WanderStore
+from wander.store import ConflictError, ValidationError, WanderStore
 
 
 class WanderStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "wander.db"
-        self.store = WanderStore(self.database_path, "test-thread")
+        self.store = WanderStore(self.database_path)
         self.journey = self.store.create_journey(
             "camera-reboot",
             "Camera reboot investigation",
@@ -41,7 +41,7 @@ class WanderStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {"journey", "version", "operation", "changed", "writer_warning"},
+            {"journey", "version", "operation", "changed"},
             set(started),
         )
         self.assertEqual("camera-reboot", started["journey"])
@@ -51,7 +51,7 @@ class WanderStoreTests(unittest.TestCase):
         self.assertNotIn("work_items", started)
         self.assertNotIn("recent_events", started)
 
-    def test_stale_writer_is_rejected(self) -> None:
+    def test_stale_version_is_rejected(self) -> None:
         version = self.journey["version"]
         self.store.add_work_item("camera-reboot", version, "Collect evidence")
 
@@ -305,44 +305,6 @@ class WanderStoreTests(unittest.TestCase):
             result["changed"]["thread_reference_ids"],
         )
 
-    def test_unidentified_server_can_bind_once_and_create_journey(self) -> None:
-        unidentified = WanderStore(
-            Path(self.temporary_directory.name) / "unidentified.db"
-        )
-
-        identity = unidentified.identify_writer_thread(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
-        )
-        result = unidentified.create_journey(
-            "vc-runtime-cleanup",
-            "VC Runtime Cleanup",
-            "Align the native toolchain and packaged runtime.",
-        )
-
-        state = unidentified.get_journey(result["journey"])
-        self.assertEqual("identified", identity["status"])
-        self.assertEqual(
-            "01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            state["owner_thread_id"],
-        )
-        self.assertEqual(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            state["recent_events"][0]["source_thread"],
-        )
-
-    def test_mcp_session_cannot_switch_thread_identity(self) -> None:
-        unidentified = WanderStore(
-            Path(self.temporary_directory.name) / "identity-switch.db"
-        )
-        unidentified.identify_writer_thread(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
-        )
-
-        with self.assertRaises(OwnershipError):
-            unidentified.identify_writer_thread(
-                "codex://threads/01a18d56-4e60-7050-a88d-c64cc83d5bae"
-            )
-
     def test_journey_links_are_versioned_and_ordered(self) -> None:
         journey = self.store.add_journey_link(
             "camera-reboot",
@@ -414,36 +376,20 @@ class WanderStoreTests(unittest.TestCase):
                 "Reopen it",
             )
 
-    def test_non_owner_can_read_and_write_with_warning(self) -> None:
-        other_thread = WanderStore(self.database_path, "other-thread")
+    def test_second_store_uses_versions_instead_of_caller_identity(self) -> None:
+        second_store = WanderStore(self.database_path)
 
-        journey = other_thread.add_work_item(
+        journey = second_store.add_work_item(
             "camera-reboot",
             self.journey["version"],
-            "Potentially conflicting work",
+            "Versioned work",
         )
 
-        self.assertIn("codex://threads/test-thread", journey["writer_warning"])
-        self.assertIn("write succeeded", journey["writer_warning"])
-        self.assertEqual("test-thread", self.journey_state()["owner_thread_id"])
-
-    def test_owner_can_release_and_another_thread_can_claim(self) -> None:
-        journey = self.store.release_journey(
-            "camera-reboot",
-            self.journey["version"],
-            "Handing work to another conversation",
-        )
-        other_thread = WanderStore(self.database_path, "other-thread")
-        journey = other_thread.claim_journey("camera-reboot", journey["version"])
-        journey = other_thread.add_work_item(
-            "camera-reboot",
-            journey["version"],
-            "Continue from new thread",
-        )
-
+        self.assertNotIn("writer_warning", journey)
         state = self.journey_state()
-        self.assertEqual("other-thread", state["owner_thread_id"])
+        self.assertNotIn("owner_thread_id", state)
         self.assertEqual(1, len(state["work_items"]))
+        self.assertEqual("", state["recent_events"][0]["source_thread"])
 
     def test_legacy_project_schema_is_migrated_without_losing_history(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "legacy.db"
@@ -529,7 +475,7 @@ class WanderStoreTests(unittest.TestCase):
                 """
             )
 
-        migrated = WanderStore(legacy_path, "legacy-thread")
+        migrated = WanderStore(legacy_path)
         state = migrated.get_journey("legacy-work")
 
         self.assertEqual("Legacy work", state["title"])
@@ -555,6 +501,18 @@ class WanderStoreTests(unittest.TestCase):
             self.assertNotIn("project_links", tables)
             self.assertIn("journey_id", work_item_columns)
             self.assertNotIn("project_id", work_item_columns)
+            self.assertEqual(
+                "legacy-thread",
+                connection.execute(
+                    "SELECT owner_thread_id FROM journeys WHERE id = 'journey-1'"
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                "codex://threads/legacy-thread",
+                connection.execute(
+                    "SELECT source_thread FROM events WHERE journey_id = 'journey-1'"
+                ).fetchone()[0],
+            )
             self.assertEqual([], connection.execute("PRAGMA foreign_key_check").fetchall())
             self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
 

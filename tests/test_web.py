@@ -17,8 +17,7 @@ class ReadOnlyDashboardTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.store = WanderStore(
-            Path(self.temporary_directory.name) / "wander.db",
-            "test-thread",
+            Path(self.temporary_directory.name) / "wander.db"
         )
         self.store.create_journey("wander", "Wander", "Keep durable journey state.")
         self.server = create_server(

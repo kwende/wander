@@ -12,7 +12,7 @@ class JauntStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "wander.db"
-        self.store = WanderStore(self.database_path, "test-thread")
+        self.store = WanderStore(self.database_path)
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -35,7 +35,7 @@ class JauntStoreTests(unittest.TestCase):
             "Review the Escalated Support thread and recent diagnostics.",
             jaunt["history"][0]["notes_snapshot"],
         )
-        self.assertEqual("codex://threads/test-thread", jaunt["history"][0]["source_thread"])
+        self.assertEqual("", jaunt["history"][0]["source_thread"])
         self.assertEqual([], self.store.list_journeys())
 
     def test_edit_uses_independent_optimistic_version_and_history(self) -> None:
@@ -183,7 +183,7 @@ class JauntStoreTests(unittest.TestCase):
         finally:
             connection.close()
 
-        migrated_store = WanderStore(legacy_database, "test-thread")
+        migrated_store = WanderStore(legacy_database)
         legacy_jaunt = migrated_store.get_jaunt("legacy-jaunt")
         created = migrated_store.create_jaunt("Created after migration")
 

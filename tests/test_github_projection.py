@@ -11,8 +11,7 @@ class GitHubProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.store = WanderStore(
-            Path(self.temporary_directory.name) / "wander.db",
-            "test-thread",
+            Path(self.temporary_directory.name) / "wander.db"
         )
         self.journey = self.store.create_journey(
             "wander",

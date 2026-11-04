@@ -93,21 +93,11 @@ Python, MCP entry point, and skill destination without changing the machine.
   marker. Reuse one match to recover an interrupted registration, create only
   when there are zero matches, and stop on multiple matches. Marker discovery
   recovers identity only and never imports GitHub content into Wander.
-- Treat `owner_thread_id` as a soft workflow bumper, not authorization. A
-  non-owner write succeeds and returns `writer_warning`; surface that warning
-  prominently instead of hiding it or describing the write as forbidden.
 - Do not infer or scrape Codex thread IDs from internal session storage. Attach
   only supported `codex://threads/<thread-id>` links supplied through a stable
-  product surface.
-- Prefer `attach_current_thread` when the host exposes `CODEX_THREAD_ID` or
-  `CODEX_SESSION_ID`; ask for a copied deep link and use `attach_thread` only
-  when host identity is unavailable.
-- A globally registered MCP process may not inherit per-thread environment
-  values. Bind its session once with `identify_thread`; never switch that
-  identity within the same server process.
-- Cross-thread delegation exposes the sender as `source_thread_id`; that is not
-  the target conversation's identity. Read the target command environment's
-  `CODEX_THREAD_ID` or `CODEX_SESSION_ID` instead.
+  product surface. A thread link is ordinary navigation data attached through
+  `attach_thread`; it does not identify an MCP caller or affect authorization,
+  provenance, concurrency, or mutation behavior.
 
 ## Active-work detail and resumability
 

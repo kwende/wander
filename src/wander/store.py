@@ -55,10 +55,6 @@ class ConflictError(WanderError):
     pass
 
 
-class OwnershipError(WanderError):
-    pass
-
-
 class ValidationError(WanderError):
     pass
 
@@ -68,27 +64,10 @@ def utc_now() -> str:
 
 
 class WanderStore:
-    def __init__(self, database_path: str | Path, writer_thread_id: str | None = None):
+    def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path).resolve()
-        self.writer_thread_id = writer_thread_id.strip() if writer_thread_id else None
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
-
-    @property
-    def writer_thread_link(self) -> str:
-        return f"codex://threads/{self.writer_thread_id}" if self.writer_thread_id else ""
-
-    def identify_writer_thread(self, deep_link: str) -> dict[str, str]:
-        deep_link = deep_link.strip()
-        if not THREAD_LINK_PATTERN.fullmatch(deep_link):
-            raise ValidationError("deep_link must have the form codex://threads/<thread-id>")
-        thread_id = deep_link.removeprefix("codex://threads/")
-        if self.writer_thread_id and self.writer_thread_id.casefold() != thread_id.casefold():
-            raise OwnershipError(
-                "This Wander MCP session is already bound to a different Codex thread"
-            )
-        self.writer_thread_id = thread_id
-        return {"thread_link": self.writer_thread_link, "status": "identified"}
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -408,22 +387,6 @@ class WanderStore:
             )
         return row
 
-    def _writer_warning(self, journey_row: sqlite3.Row) -> str:
-        if not self.writer_thread_id:
-            return ""
-        if not journey_row["owner_thread_id"]:
-            return (
-                f"Journey '{journey_row['slug']}' has no designated writer thread. "
-                "The write succeeded, but consider claiming it to keep the work centered."
-            )
-        if journey_row["owner_thread_id"] != self.writer_thread_id:
-            owner_link = f"codex://threads/{journey_row['owner_thread_id']}"
-            return (
-                f"Journey '{journey_row['slug']}' is centered in another Codex thread: "
-                f"{owner_link}. This write succeeded, but review that conversation to avoid drift."
-            )
-        return ""
-
     def _advance(
         self,
         connection: sqlite3.Connection,
@@ -457,7 +420,7 @@ class WanderStore:
                 after_version,
                 summary.strip(),
                 evidence.strip(),
-                self.writer_thread_link,
+                "",
                 now,
             ),
         )
@@ -485,7 +448,6 @@ class WanderStore:
                 for entity, identifiers in (changed or {}).items()
                 if identifiers
             },
-            "writer_warning": self._writer_warning(journey_row),
         }
 
     def _advance_jaunt(
@@ -526,7 +488,7 @@ class WanderStore:
                 title_snapshot,
                 notes_snapshot,
                 status_snapshot,
-                self.writer_thread_link,
+                "",
                 now,
             ),
         )
@@ -578,7 +540,7 @@ class WanderStore:
                     f"Created jaunt: {title}",
                     title,
                     notes,
-                    self.writer_thread_link,
+                    "",
                     now,
                 ),
             )
@@ -693,8 +655,6 @@ class WanderStore:
         return result
 
     def create_journey(self, slug: str, title: str, objective: str) -> dict[str, Any]:
-        if not self.writer_thread_id:
-            raise OwnershipError("CODEX_THREAD_ID is required to create a journey")
         slug = slug.strip().lower()
         if not SLUG_PATTERN.fullmatch(slug):
             raise ValidationError("slug must contain lowercase letters, digits, and single hyphens")
@@ -711,7 +671,7 @@ class WanderStore:
                         version, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, 'active', ?, 1, ?, ?)
                     """,
-                    (journey_id, slug, title, objective, self.writer_thread_id, now, now),
+                    (journey_id, slug, title, objective, None, now, now),
                 )
             except sqlite3.IntegrityError as error:
                 raise ConflictError(f"A journey with slug '{slug}' already exists") from error
@@ -722,7 +682,7 @@ class WanderStore:
                     summary, source_thread, created_at
                 ) VALUES (?, 'journey.created', 0, 1, ?, ?, ?)
                 """,
-                (journey_id, f"Created journey: {title}", self.writer_thread_link, now),
+                (journey_id, f"Created journey: {title}", "", now),
             )
             result = self._mutation_result(
                 connection,
@@ -749,7 +709,7 @@ class WanderStore:
         with self._connection() as connection:
             journey_row = self._journey_row(connection, journey)
             result = dict(journey_row)
-            result["writer_warning"] = self._writer_warning(journey_row)
+            result.pop("owner_thread_id", None)
             result["work_items"] = [
                 dict(row)
                 for row in connection.execute(
@@ -817,8 +777,6 @@ class WanderStore:
                     "status",
                     "current_summary",
                     "current_phase",
-                    "owner_thread_id",
-                    "writer_warning",
                     "version",
                     "updated_at",
                 )
@@ -831,75 +789,6 @@ class WanderStore:
             "latest_checkpoint": detail["latest_checkpoint"],
             "threads": detail["threads"],
         }
-
-    def claim_journey(self, journey: str, expected_version: int) -> dict[str, Any]:
-        if not self.writer_thread_id:
-            raise OwnershipError(
-                "CODEX_THREAD_ID is unavailable. Supply a supported Codex deep link "
-                "through the launcher before claiming this journey."
-            )
-        with self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            journey_row = self._journey_row(connection, journey)
-            if journey_row["version"] != expected_version:
-                raise ConflictError(
-                    f"Stale journey version for {journey_row['slug']}: expected "
-                    f"{expected_version}, current {journey_row['version']}."
-                )
-            if journey_row["owner_thread_id"]:
-                if journey_row["owner_thread_id"] == self.writer_thread_id:
-                    result = self._mutation_result(
-                        connection,
-                        journey_row["id"],
-                        "journey.claimed",
-                    )
-                    connection.rollback()
-                    return result
-                owner_link = f"codex://threads/{journey_row['owner_thread_id']}"
-                raise OwnershipError(
-                    f"Journey '{journey_row['slug']}' is already owned by {owner_link}."
-                )
-            self._advance(
-                connection,
-                journey_row,
-                "journey.claimed",
-                "Claimed journey writer ownership",
-                journey_updates={"owner_thread_id": self.writer_thread_id},
-            )
-            result = self._mutation_result(
-                connection,
-                journey_row["id"],
-                "journey.claimed",
-                {"journey_ids": [journey_row["id"]]},
-            )
-            connection.commit()
-        return result
-
-    def release_journey(
-        self,
-        journey: str,
-        expected_version: int,
-        reason: str,
-    ) -> dict[str, Any]:
-        reason = self._required(reason, "reason")
-        with self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            journey_row = self._locked_journey(connection, journey, expected_version)
-            self._advance(
-                connection,
-                journey_row,
-                "journey.released",
-                f"Released journey writer ownership: {reason}",
-                journey_updates={"owner_thread_id": None},
-            )
-            result = self._mutation_result(
-                connection,
-                journey_row["id"],
-                "journey.released",
-                {"journey_ids": [journey_row["id"]]},
-            )
-            connection.commit()
-        return result
 
     def add_journey_link(
         self,
@@ -1371,7 +1260,7 @@ class WanderStore:
                     invariants.strip(),
                     open_questions.strip(),
                     resume_here,
-                    self.writer_thread_link,
+                    "",
                     now,
                 ),
             )

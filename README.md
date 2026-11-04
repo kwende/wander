@@ -96,10 +96,9 @@ registration. Use `-PlanOnly` to inspect its resolved paths without changing
 the machine and `-Force` to replace an existing Wander MCP registration.
 
 Restart Codex afterward. A conversation can then say `Make a Wander out of our
-task`; the skill discovers or creates the journey, binds the MCP session to the
-host-provided conversation identity, and builds the high-level work-item
-sequence. The identity is passed explicitly because a globally launched MCP
-process does not necessarily inherit the calling thread's environment.
+task`; the skill discovers or creates the journey, optionally attaches a
+supported chat deep link for navigation, and builds the high-level work-item
+sequence. The link is ordinary Journey data, not MCP caller identity.
 
 To enable Mathom tools, configure the Hippo MCP endpoint and the dedicated
 Wander credential before starting Codex:
@@ -156,8 +155,7 @@ Mutation tools return a compact delta rather than the full journey read model:
   "journey": "camera-reboot",
   "version": 3,
   "operation": "work_item.active",
-  "changed": {"work_item_ids": ["..."]},
-  "writer_warning": ""
+  "changed": {"work_item_ids": ["..."]}
 }
 ```
 
@@ -184,11 +182,9 @@ GitHub --------------------------------------------------------------X--> SQLite
 created comment is a normal versioned Wander mutation, after which the comment
 must be regenerated at the new journey version.
 
-Journeys may designate one Codex thread as their center. A different thread can
-still write, but every read or mutation result includes a prominent
-`writer_warning` pointing back to the designated `codex://` conversation. This
-is a workflow bumper for an experimental tool, not authentication or a security
-boundary.
+Codex chat links are explicit Journey references used only for navigation. They
+do not identify the MCP caller and do not participate in authorization,
+provenance, concurrency, or version checks.
 
 ## Project-to-journey compatibility
 

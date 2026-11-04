@@ -201,7 +201,6 @@ def build_github_issue_projection(
     return {
         "journey": journey["slug"],
         "journey_version": journey["version"],
-        "writer_warning": journey.get("writer_warning", ""),
         "issue": issue,
         "comment": comment,
         "operation": "update" if comment else "create",

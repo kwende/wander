@@ -5,12 +5,11 @@ import inspect
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from wander import mcp_server
 from wander.mathoms import HippoClient, HippoError
-from wander.store import WanderStore
+from wander.store import ValidationError, WanderStore
 
 
 class HippoClientTests(unittest.TestCase):
@@ -85,20 +84,17 @@ class HippoClientTests(unittest.TestCase):
         search.assert_awaited_once_with("SQLite connection", None, 3)
 
     def test_save_mathom_handler_awaits_async_client(self) -> None:
-        with (
-            patch.object(
-                mcp_server,
-                "store",
-                new=SimpleNamespace(writer_thread_link="codex://threads/thread-1"),
-            ),
-            patch.object(
-                mcp_server.hippo,
-                "record_mathom_async",
-                new=AsyncMock(return_value={"outcomes": []}),
-            ) as record,
-        ):
+        source_thread_link = (
+            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
+        )
+        with patch.object(
+            mcp_server.hippo,
+            "record_mathom_async",
+            new=AsyncMock(return_value={"outcomes": []}),
+        ) as record:
             result = asyncio.run(
                 mcp_server.save_mathom(
+                    source_thread_link,
                     "observation",
                     "python.sqlite.connection_context",
                     "A sqlite3 connection context manager does not close the connection.",
@@ -108,7 +104,7 @@ class HippoClientTests(unittest.TestCase):
 
         self.assertEqual({"outcomes": []}, result)
         record.assert_awaited_once_with(
-            "codex://threads/thread-1",
+            source_thread_link,
             "observation",
             "python.sqlite.connection_context",
             "A sqlite3 connection context manager does not close the connection.",
@@ -120,6 +116,18 @@ class HippoClientTests(unittest.TestCase):
             None,
             None,
         )
+
+    def test_save_mathom_requires_an_explicit_supported_thread_link(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "source_thread_link"):
+            asyncio.run(
+                mcp_server.save_mathom(
+                    "https://example.test/not-a-codex-link",
+                    "observation",
+                    "python.sqlite.connection_context",
+                    "Statement",
+                    1.0,
+                )
+            )
 
 
 if __name__ == "__main__":

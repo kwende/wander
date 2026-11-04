@@ -5,7 +5,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from wander.mathoms import HippoClient
-from wander.store import WanderStore
+from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderStore
 
 
 store: WanderStore | None = None
@@ -15,7 +15,6 @@ mcp = MCPServer(
     version="0.8.0",
     instructions=(
         "Wander is the authoritative multi-thread work ledger. Read resume context before Journey work. "
-        "Identify the current Codex thread before the first mutation. "
         "Pass the last-read aggregate version to every mutation after creation. "
         "Record evidence before Journey completion. "
         "Mutation results are compact deltas; chain writes with their returned version. "
@@ -23,8 +22,7 @@ mcp = MCPServer(
         "Create a Jaunt only when the user explicitly asks, and use its independent version for edits. "
         "Never emulate promotion by creating or labeling a Journey. "
         "Mathoms are request-only: never save one unless the user explicitly asks to "
-        "preserve the specific knowledge in the current conversation. "
-        "If writer_warning is non-empty, surface it prominently; it is a soft ownership bumper."
+        "preserve the specific knowledge in the current conversation."
     ),
 )
 
@@ -66,12 +64,6 @@ def get_journey(journey: str) -> dict[str, Any]:
 def get_resume_context(journey: str) -> dict[str, Any]:
     """Get compact state needed to resume a journey without reanalyzing its entire history."""
     return store.get_resume_context(journey)
-
-
-@mcp.tool()
-def identify_thread(deep_link: str) -> dict[str, str]:
-    """Bind this MCP session to one supported codex://threads/<thread-id> identity."""
-    return store.identify_writer_thread(deep_link)
 
 
 @mcp.tool()
@@ -125,6 +117,7 @@ def reopen_jaunt(
 
 @mcp.tool()
 async def save_mathom(
+    source_thread_link: str,
     kind: str,
     predicate: str,
     statement: str,
@@ -141,16 +134,17 @@ async def save_mathom(
     Call this only after the user explicitly asks to save or remember the
     specific knowledge represented by these arguments. Never infer permission
     from usefulness, novelty, a completed Journey, or an earlier standing
-    request. Clarify the claim or evidence with the user before calling when
-    its meaning is ambiguous.
+    request. Pass the source chat deep link explicitly as ordinary provenance
+    data. Clarify the claim or evidence with the user before calling when its
+    meaning is ambiguous.
     """
-    if not store.writer_thread_link:
+    source_thread_link = source_thread_link.strip()
+    if not THREAD_LINK_PATTERN.fullmatch(source_thread_link):
         raise ValidationError(
-            "Identify the current Codex thread before saving a Mathom so Hippo "
-            "can retain its source-session provenance"
+            "source_thread_link must have the form codex://threads/<thread-id>"
         )
     return await hippo.record_mathom_async(
-        store.writer_thread_link,
+        source_thread_link,
         kind,
         predicate,
         statement,
@@ -182,18 +176,6 @@ async def search_mathoms(
 def create_journey(slug: str, title: str, objective: str) -> dict[str, Any]:
     """Create an active journey. Slugs use lowercase letters, digits, and hyphens."""
     return store.create_journey(slug, title, objective)
-
-
-@mcp.tool()
-def claim_journey(journey: str, expected_version: int) -> dict[str, Any]:
-    """Designate this Codex thread as the journey's center. Existing ownership is preserved."""
-    return store.claim_journey(journey, expected_version)
-
-
-@mcp.tool()
-def release_journey(journey: str, expected_version: int, reason: str) -> dict[str, Any]:
-    """Clear the writer-thread indicator so another Codex thread may claim the journey."""
-    return store.release_journey(journey, expected_version, reason)
 
 
 @mcp.tool()
@@ -364,28 +346,6 @@ def attach_thread(
 ) -> dict[str, Any]:
     """Attach or refresh a supported codex://threads/<thread-id> reference."""
     return store.attach_thread(journey, expected_version, deep_link, title, role)
-
-
-@mcp.tool()
-def attach_current_thread(
-    journey: str,
-    expected_version: int,
-    title: str,
-    role: str,
-) -> dict[str, Any]:
-    """Attach the current Codex conversation using its host-provided thread identity."""
-    if not store.writer_thread_link:
-        raise ValidationError(
-            "The current thread identity is unavailable. Ask the user to supply a "
-            "codex://threads/<thread-id> deep link and use attach_thread instead."
-        )
-    return store.attach_thread(
-        journey,
-        expected_version,
-        store.writer_thread_link,
-        title,
-        role,
-    )
 
 
 @mcp.tool()

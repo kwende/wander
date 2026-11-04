@@ -13,7 +13,7 @@ class JauntMcpTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "wander.db"
-        self.store = WanderStore(database_path, "jaunt-mcp-test")
+        self.store = WanderStore(database_path)
         mcp_server.configure_mcp_server(self.store)
 
     def tearDown(self) -> None:
@@ -65,6 +65,16 @@ class JauntMcpTests(unittest.TestCase):
                 "complete_jaunt",
                 "reopen_jaunt",
             }.issubset(names)
+        )
+
+    def test_mcp_exposes_explicit_thread_links_without_caller_identity_tools(self) -> None:
+        tools = asyncio.run(mcp_server.mcp.list_tools())
+        names = {tool.name for tool in tools}
+
+        self.assertIn("attach_thread", names)
+        self.assertTrue(
+            {"identify_thread", "claim_journey", "release_journey", "attach_current_thread"}
+            .isdisjoint(names)
         )
 
 

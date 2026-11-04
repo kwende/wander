@@ -14,23 +14,17 @@ understandable in the dashboard.
 
 1. Call `list_journeys` before creating anything. Reuse a clearly matching
    active journey; do not create duplicates from similar conversation wording.
-2. Before the first mutation, execute a read-only host command to read
-   `CODEX_THREAD_ID` (or `CODEX_SESSION_ID`) from the command environment, then
-   call `identify_thread` with `codex://threads/<thread-id>`. Do not substitute
-   a delegation's `source_thread_id`: that identifies the sending conversation,
-   not the thread performing this work. The environment value is a supported
-   host surface; do not scrape Codex session files. If neither value is
-   available, ask the user for the copied deep link.
-3. When creating a journey, derive a short title, plain-language objective, and
+2. When creating a journey, derive a short title, plain-language objective, and
    slug from the task. Ask only when a materially different interpretation is
    plausible.
-4. Call `attach_current_thread` with a meaningful conversation title and role.
-   If host thread identity is unavailable, ask the user for the copied
-   `codex://threads/<thread-id>` link and call `attach_thread`.
-5. Add a small ordered set of semantic work items that communicates what
+3. Attach a useful `codex://threads/<thread-id>` deep link with `attach_thread`
+   when one is available through a supported host surface or supplied by the
+   user. Treat it as ordinary navigation data; it does not identify the MCP
+   caller or affect authorization, provenance, concurrency, or mutations.
+4. Add a small ordered set of semantic work items that communicates what
    happened, where work is now, and what remains. Prefer roughly 3-7 top-level
    milestones; use more only when the user needs them.
-6. Start the item that represents the actual current activity. If it has two or
+5. Start the item that represents the actual current activity. If it has two or
    more known steps that can be executed or verified independently, add them as
    children so the active path is resumable. Do not mark an item complete
    without concrete evidence.
@@ -62,8 +56,6 @@ may differ), treat it as an identity pointer rather than sufficient context:
 - Pass the last-read journey `version` to every mutation. On a stale-version
   conflict, reload, understand the intervening change, and retry only if the
   intended update still makes sense.
-- Surface a non-empty `writer_warning`, but continue when the requested write
-  is still appropriate. It is a workflow bumper, not an authorization failure.
 - Favor resumability over brevity on the active path. Add child work items just
   in time when steps become independently startable, completable, verifiable,
   blockable, delegable, or returnable. The deepest active child should describe
@@ -94,9 +86,6 @@ projection.
 
 - Create a Jaunt only when the user explicitly asks to add or create one. Do
   not turn ordinary side work into a Jaunt merely because it is small.
-- Before the first Jaunt mutation, identify the current Codex thread through
-  the same supported host identity process used for Journeys so event
-  provenance is retained.
 - Use `list_jaunts` to discover Jaunts and `get_jaunt` to read the selected
   Jaunt and its current version before mutation.
 - Use `create_jaunt`, `update_jaunt`, `complete_jaunt`, and `reopen_jaunt` for
@@ -162,6 +151,9 @@ copy Mathoms into Wander's SQLite journey ledger.
   request to save different knowledge as standing permission.
 - Ask for clarification before saving when the claim, confidence, provenance,
   or intended scope is ambiguous.
+- Pass the current `codex://threads/<thread-id>` link explicitly as
+  `source_thread_link` when saving. This is Mathom provenance supplied as data,
+  not an MCP caller identity retained by Wander.
 - `search_mathoms` is read-only and does not authorize a later save.
 - Do not narrate an unrequested save because unrequested saves are prohibited.
 
