@@ -244,7 +244,8 @@ class WanderStore:
             }
             if "owner_thread_id" not in journey_columns:
                 connection.execute("ALTER TABLE journeys ADD COLUMN owner_thread_id TEXT")
-            connection.execute("PRAGMA user_version = 3")
+            self._migrate_jaunt_schema(connection)
+            connection.execute("PRAGMA user_version = 4")
             connection.commit()
 
     @staticmethod
@@ -303,6 +304,31 @@ class WanderStore:
         foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_errors:
             raise ConflictError("Journey schema migration produced invalid foreign keys")
+
+    @classmethod
+    def _migrate_jaunt_schema(cls, connection: sqlite3.Connection) -> None:
+        if not cls._table_exists(connection, "jaunts"):
+            return
+
+        jaunt_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(jaunts)").fetchall()
+        }
+        if "promoted_journey_id" not in jaunt_columns:
+            connection.execute(
+                "ALTER TABLE jaunts ADD COLUMN promoted_journey_id TEXT REFERENCES journeys(id)"
+            )
+
+        if not cls._table_exists(connection, "jaunt_events"):
+            return
+        event_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(jaunt_events)").fetchall()
+        }
+        for column in ("title_snapshot", "notes_snapshot", "status_snapshot"):
+            if column not in event_columns:
+                connection.execute(
+                    f"ALTER TABLE jaunt_events ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                )
 
     @staticmethod
     def _required(value: str, field: str) -> str:

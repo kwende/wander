@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -137,6 +138,59 @@ class JauntStoreTests(unittest.TestCase):
                 created["version"],
                 title="A small task",
             )
+
+    def test_legacy_jaunt_schema_is_migrated_without_losing_history(self) -> None:
+        legacy_database = Path(self.temporary_directory.name) / "legacy-jaunts.db"
+        connection = sqlite3.connect(legacy_database)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE jaunts (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE TABLE jaunt_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    jaunt_id TEXT NOT NULL REFERENCES jaunts(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL,
+                    before_version INTEGER NOT NULL,
+                    after_version INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    source_thread TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO jaunts (
+                    id, title, notes, status, version, created_at, updated_at
+                ) VALUES (
+                    'legacy-jaunt', 'Existing jaunt', 'Existing notes', 'open', 1,
+                    '2026-11-04T00:00:00+00:00', '2026-11-04T00:00:00+00:00'
+                );
+                INSERT INTO jaunt_events (
+                    jaunt_id, operation, before_version, after_version,
+                    summary, source_thread, created_at
+                ) VALUES (
+                    'legacy-jaunt', 'jaunt.created', 0, 1, 'Existing history', '',
+                    '2026-11-04T00:00:00+00:00'
+                );
+                """
+            )
+        finally:
+            connection.close()
+
+        migrated_store = WanderStore(legacy_database, "test-thread")
+        legacy_jaunt = migrated_store.get_jaunt("legacy-jaunt")
+        created = migrated_store.create_jaunt("Created after migration")
+
+        self.assertIsNone(legacy_jaunt["promoted_journey_id"])
+        self.assertEqual("Existing history", legacy_jaunt["history"][0]["summary"])
+        self.assertEqual("", legacy_jaunt["history"][0]["title_snapshot"])
+        self.assertEqual("open", migrated_store.get_jaunt(created["jaunt"])["status"])
 
 
 if __name__ == "__main__":
