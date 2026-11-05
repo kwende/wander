@@ -151,27 +151,30 @@ Journey. Agents have equivalent semantic MCP tools. Jaunts have independent
 versions and no Journey relationship; promotion is a separate capability and
 must never be simulated by creating a labeled Journey.
 
-The repository's `.mcp.json` starts `scripts/start-mcp.ps1`. Restart Codex after
-setting up the environment so the repository MCP registry is rediscovered.
+The repository's `.mcp.json` points to the desktop application's localhost MCP
+endpoint. It never starts a second Wander process or opens SQLite. Open Wander
+before using repository-scoped MCP tools.
 
 ## Codex integration
 
-For a personal installation available from every checkout, use the idempotent
-installer from any clone location:
+After installing the desktop application, use the idempotent Codex installer:
 
 ```powershell
 & .\scripts\install-codex.ps1
 ```
 
-It creates or updates `.venv`, installs Wander, copies the user skill, registers
-the global MCP server against the current checkout, and verifies the resulting
-registration. Use `-PlanOnly` to inspect its resolved paths without changing
-the machine and `-Force` to replace an existing Wander MCP registration.
+It copies the user skill, registers the global MCP server at
+`http://127.0.0.1:8766/mcp`, and verifies the resulting registration. It also
+migrates the recognized legacy checkout registration. Use `-PlanOnly` to
+inspect its resolved paths without changing the machine and `-Force` to refresh
+an existing matching registration.
 
-Restart Codex afterward. A conversation can then say `Make a Wander out of our
-task`; the skill discovers or creates the journey, optionally attaches a
-supported chat deep link for navigation, and builds the high-level work-item
-sequence. The link is ordinary Journey data, not MCP caller identity.
+Open Wander from the Desktop or Start Menu and restart Codex afterward. The MCP
+endpoint exists only while the application is open. A conversation can then say
+`Make a Wander out of our task`; the skill discovers or creates the journey,
+optionally attaches a supported chat deep link for navigation, and builds the
+high-level work-item sequence. The link is ordinary Journey data, not MCP caller
+identity.
 
 To enable Mathom tools, configure the Hippo MCP endpoint and the dedicated
 Wander credential before starting Codex:

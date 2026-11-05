@@ -11,40 +11,49 @@ Windows machine, use this contract instead of reconstructing the installation:
 1. Confirm `python` (3.11 or newer), `git`, and `codex` are available on `PATH`.
 2. Clone or update the repository at any writable absolute path. Wander scripts
    derive the repository root; do not rewrite them with a machine-specific path.
-3. From the repository root, run:
+3. Build the clean desktop bundle:
 
    ```powershell
-   & .\scripts\install-codex.ps1
+   & .\scripts\build-desktop.ps1
    ```
 
-   This idempotently creates/updates `.venv`, installs the package, copies the
-   Wander skill to the user's `.codex\skills\wander`, and registers the global
-   `wander` MCP server against the current checkout.
-4. Verify `codex mcp get wander` names this checkout's `scripts\start-mcp.ps1`
-   and the installed skill contains `SKILL.md`.
-5. Tell the user to restart Codex. Registration changes do not become reliable
-   in an already-running Codex process.
-6. Start the dashboard separately with `& .\scripts\start-web.ps1`. Verify
+4. Install the reported bundle. For a new empty ledger, pass `-AllowNewLedger`:
+
+   ```powershell
+   & .\scripts\install-desktop.ps1 `
+       -BundlePath .\artifacts\bundles\<version>\Wander `
+       -AllowNewLedger
+   ```
+
+   To migrate an existing ledger, stop its owning Wander process, invoke the
+   staged `Wander.exe --import-legacy-database` command documented in `README.md`,
+   then publish with `install-desktop.ps1` without `-AllowNewLedger`.
+5. Run `& .\scripts\install-codex.ps1`. This copies the Wander skill and
+   idempotently registers `http://127.0.0.1:8766/mcp`; it never registers a
+   process that can open SQLite independently.
+6. Open Wander from the Desktop or Start Menu. Verify
    `/api/health` reports `mode: read-only`, `jaunts_mode: local-authoring` from
    localhost, and a reachable `share_base_url`. Journey HTTP state remains
    read-only; the local Jaunts modal is the one human-authoring exception. If
-   multi-NIC detection selects the wrong adapter, restart with
-   `-ShareBaseUrl 'http://<reachable-ip>:8765'`.
-7. After Codex restarts, call Wander `list_journeys` and then create or resume
+   multi-NIC detection selects the wrong adapter, launch the executable with an
+   explicit `--share-base-url http://<reachable-ip>:8765` argument.
+7. Restart Codex, verify `codex mcp get wander` reports the localhost HTTP URL,
+   call Wander `list_journeys`, and then create or resume
    the requested journey. Do not claim installation succeeded merely because
-   the Python package installed.
+   the bundle was built.
 
 Use the global MCP plus user-skill installation model above. Do not also install
 the local plugin: exposing both creates duplicate Wander integrations backed by
 the same database.
 
-`data\wander.db` is intentionally gitignored. A new checkout starts with a new
-ledger. To migrate existing workboards, stop the Wander MCP and web processes,
-copy the SQLite database together with any `-wal`/`-shm` companions, then start
-Wander and verify the journey list. Never copy a live SQLite database piecemeal.
+`data\wander.db` is intentionally gitignored. Repository development may use it
+only when passed explicitly to the desktop application. Production migration is
+owned by packaged `Wander.exe`; never copy a live SQLite database or open it from
+PowerShell, Codex, an MCP shim, or an installer.
 
-Run `& .\scripts\install-codex.ps1 -PlanOnly` to inspect the resolved checkout,
-Python, MCP entry point, and skill destination without changing the machine.
+Run `install-desktop.ps1 -PlanOnly` and `install-codex.ps1 -PlanOnly` to inspect
+the resolved application, data, MCP URL, and skill paths without changing the
+machine.
 
 ## Runtime invariants
 
