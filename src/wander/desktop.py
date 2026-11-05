@@ -3,10 +3,15 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
+import socket
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
+import traceback
+import uuid
 from dataclasses import dataclass, field
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +31,7 @@ from wander.persistence import (
     PersistenceError,
     SingleInstanceLock,
     backup_before_schema_migration,
+    check_database_compatibility,
 )
 from wander.store import SCHEMA_VERSION, WanderStore
 from wander.web import create_server
@@ -101,6 +107,7 @@ class DesktopHost:
                     port=mcp_port,
                     log_level="warning",
                     access_log=False,
+                    log_config=None,
                 )
             )
         except OSError as error:
@@ -261,14 +268,101 @@ def show_startup_error(message: str) -> None:
         pass
 
 
+def _write_diagnostic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def run_self_test() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="wander-self-test-") as temporary_directory:
+        root = Path(temporary_directory)
+        host = DesktopHost.create(
+            "127.0.0.1",
+            0,
+            root / "wander.db",
+            mcp_port=0,
+            backups_directory=root / "backups",
+        )
+        dashboard_port = host.server.server_port
+        try:
+            host.start()
+            created = host.store.create_journey(
+                "packaged-self-test",
+                "Packaged self-test",
+                "Verify the bundled runtime without touching user data.",
+            )
+            with urlopen(f"{host.local_url}/api/health", timeout=1) as response:
+                health = json.load(response)
+            with urlopen(
+                f"{host.local_url}/api/journeys/packaged-self-test", timeout=1
+            ) as response:
+                journey = json.load(response)
+            mcp_port = host.mcp_port
+        finally:
+            host.stop()
+        endpoints_closed = True
+        for port in (dashboard_port, mcp_port):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    endpoints_closed = False
+            except OSError:
+                pass
+        if health.get("status") != "ok" or journey.get("version") != created["version"]:
+            raise DesktopStartupError("Packaged self-test observed inconsistent application state")
+        if not endpoints_closed:
+            raise DesktopStartupError("Packaged self-test did not release both listeners")
+        return {
+            "status": "ok",
+            "schema_version": SCHEMA_VERSION,
+            "dashboard_mode": health.get("mode"),
+            "mcp_host": "127.0.0.1",
+            "endpoints_closed": endpoints_closed,
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Open Wander as a desktop application")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--mcp-port", type=int, default=8766)
     parser.add_argument("--database", type=Path)
+    parser.add_argument("--backups-directory", type=Path)
     parser.add_argument("--share-base-url")
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--check-database", type=Path)
+    parser.add_argument("--diagnostic-output", type=Path)
     arguments = parser.parse_args(argv)
+    if arguments.self_test and arguments.check_database:
+        parser.error("--self-test and --check-database are mutually exclusive")
+    if (arguments.self_test or arguments.check_database) and not arguments.diagnostic_output:
+        parser.error("diagnostic modes require --diagnostic-output")
+    if arguments.self_test:
+        try:
+            report = run_self_test()
+        except Exception as error:
+            _write_diagnostic(
+                arguments.diagnostic_output,
+                {"status": "error", "error": str(error), "traceback": traceback.format_exc()},
+            )
+            return 1
+        _write_diagnostic(arguments.diagnostic_output, report)
+        return 0
+    if arguments.check_database:
+        try:
+            report = check_database_compatibility(arguments.check_database, SCHEMA_VERSION)
+        except Exception as error:
+            _write_diagnostic(
+                arguments.diagnostic_output,
+                {"status": "error", "error": str(error), "traceback": traceback.format_exc()},
+            )
+            return 1
+        _write_diagnostic(arguments.diagnostic_output, {"status": "ok", **report})
+        return 0 if report["compatible"] else 2
     database_path = arguments.database or default_database_path()
     try:
         run_desktop(
@@ -277,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
             database_path,
             arguments.share_base_url,
             arguments.mcp_port,
-            backup_directory_for_database(database_path),
+            arguments.backups_directory or backup_directory_for_database(database_path),
         )
     except Exception as error:
         show_startup_error(str(error))

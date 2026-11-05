@@ -19,7 +19,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from wander import mcp_server
-from wander.desktop import DesktopHost, DesktopStartupError, run_desktop
+from wander.desktop import DesktopHost, DesktopStartupError, main, run_desktop, run_self_test
 
 
 async def list_mcp_tools(url: str) -> set[str]:
@@ -244,6 +244,36 @@ class DesktopHostTests(unittest.TestCase):
         self.assertEqual("Wander", calls[0][1][0])
         self.assertRegex(calls[0][1][1], r"^http://127\.0\.0\.1:\d+$")
         self.assertEqual(("start", {"gui": "edgechromium"}), calls[1])
+
+    def test_self_test_uses_temporary_state_and_releases_endpoints(self) -> None:
+        report = run_self_test()
+
+        self.assertEqual("ok", report["status"])
+        self.assertEqual("read-only", report["dashboard_mode"])
+        self.assertTrue(report["endpoints_closed"])
+
+    def test_database_compatibility_mode_returns_machine_readable_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "future.db"
+            output = root / "diagnostic.json"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("PRAGMA user_version = 5")
+
+            exit_code = main(
+                [
+                    "--check-database",
+                    str(database),
+                    "--diagnostic-output",
+                    str(output),
+                ]
+            )
+
+            self.assertEqual(2, exit_code)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual("ok", report["status"])
+            self.assertFalse(report["compatible"])
+            self.assertEqual(5, report["schema_version"])
 
 
 if __name__ == "__main__":

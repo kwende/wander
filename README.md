@@ -52,6 +52,54 @@ multi-NIC host, override auto-detection explicitly:
 `WANDER_SHARE_BASE_URL` provides the same override for unattended startup. This
 is a LAN-reachable address, not discovery of an Internet/NAT public address.
 
+## Build and stage the desktop bundle
+
+The Windows desktop artifact is a PyInstaller one-folder bundle. The build is
+identified by the application version plus the full Git commit recorded in its
+manifest; dirty builds are marked explicitly and are refused by the installer
+unless its development override is supplied.
+
+```powershell
+& .\scripts\build-desktop.ps1
+```
+
+The build script installs the pinned packaging extra, builds under
+`artifacts\bundles`, hashes every bundled file into `wander-build.json`, and
+runs the packaged executable's temporary-data lifecycle test. It does not
+install the artifact or touch the real ledger.
+
+An immutable version can be staged without publishing any launch link:
+
+```powershell
+& .\scripts\install-desktop.ps1 `
+    -BundlePath .\artifacts\bundles\<version>\Wander `
+    -StageOnly
+```
+
+A full install is data-gated. It requires the per-user ledger to exist first,
+unless `-AllowNewLedger` explicitly authorizes a new empty ledger. The installer
+verifies WebView2 and every manifest hash, copies into a versioned directory,
+then transactionally replaces the Desktop and Start Menu launch links. Pending
+pointer transactions are restored on the next installer or rollback run.
+
+```powershell
+& .\scripts\install-desktop.ps1 `
+    -BundlePath .\artifacts\bundles\<version>\Wander
+```
+
+Binary rollback selects the previous verified version and asks that version's
+Wander executable to check the current database schema before changing launch
+links:
+
+```powershell
+& .\scripts\rollback-desktop.ps1
+```
+
+Rollback never restores a database backup. Data restore is a separate emergency
+operation because it discards writes made after the selected snapshot. Until
+the ledger cutover and Codex registration batch is complete, use `-StageOnly`
+or temporary install/data roots rather than installing to the default paths.
+
 Each journey can expose ordered HTTP links beneath its description. Active or
 blocked parent work items expand into a read-only child checklist so the current
 acceptance criteria are visible; completed parents collapse that detail. A

@@ -151,6 +151,32 @@ def _schema_version(connection: sqlite3.Connection) -> int:
     return int(connection.execute("PRAGMA user_version").fetchone()[0])
 
 
+def check_database_compatibility(
+    database_path: str | Path,
+    supported_schema_version: int,
+) -> dict[str, Any]:
+    database = Path(database_path).resolve()
+    with SingleInstanceLock(database):
+        if not database.exists():
+            return {
+                "database": str(database),
+                "exists": False,
+                "schema_version": None,
+                "supported_schema": supported_schema_version,
+                "compatible": True,
+            }
+        with closing(_open_read_only(database)) as connection:
+            _assert_integrity(connection, str(database))
+            schema_version = _schema_version(connection)
+        return {
+            "database": str(database),
+            "exists": True,
+            "schema_version": schema_version,
+            "supported_schema": supported_schema_version,
+            "compatible": schema_version <= supported_schema_version,
+        }
+
+
 def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
     return (
         connection.execute(
