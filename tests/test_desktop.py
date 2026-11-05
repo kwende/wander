@@ -20,6 +20,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from wander import mcp_server
 from wander.desktop import DesktopHost, DesktopStartupError, main, run_desktop, run_self_test
+from wander.store import WanderStore
 
 
 async def list_mcp_tools(url: str) -> set[str]:
@@ -274,6 +275,45 @@ class DesktopHostTests(unittest.TestCase):
             self.assertEqual("ok", report["status"])
             self.assertFalse(report["compatible"])
             self.assertEqual(5, report["schema_version"])
+
+    def test_legacy_import_mode_uses_application_migration_and_writes_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "legacy" / "wander.db"
+            destination = root / "installed" / "data" / "wander.db"
+            backups = root / "installed" / "backups"
+            output = root / "diagnostic.json"
+            WanderStore(source).create_journey(
+                "imported",
+                "Imported journey",
+                "Prove the packaged command owns the migration.",
+            )
+            source_bytes = source.read_bytes()
+
+            exit_code = main(
+                [
+                    "--import-legacy-database",
+                    str(source),
+                    "--database",
+                    str(destination),
+                    "--backups-directory",
+                    str(backups),
+                    "--diagnostic-output",
+                    str(output),
+                ]
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(source_bytes, source.read_bytes())
+            self.assertEqual(
+                "Imported journey",
+                WanderStore(destination).get_journey("imported")["title"],
+            )
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual("ok", report["status"])
+            self.assertEqual("legacy-import", report["operation"])
+            self.assertEqual(str(source.resolve()), report["source"])
+            self.assertEqual(str(destination.resolve()), report["destination"])
 
 
 if __name__ == "__main__":

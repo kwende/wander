@@ -68,6 +68,22 @@ The build script installs the pinned packaging extra, builds under
 runs the packaged executable's temporary-data lifecycle test. It does not
 install the artifact or touch the real ledger.
 
+The first production cutover imports a stopped legacy ledger through the
+packaged executable. PowerShell orchestrates the paths but never opens SQLite:
+
+```powershell
+& .\artifacts\bundles\<version>\Wander\Wander.exe `
+    --import-legacy-database .\data\wander.db `
+    --database "$env:LOCALAPPDATA\Wander\data\wander.db" `
+    --backups-directory "$env:LOCALAPPDATA\Wander\backups" `
+    --diagnostic-output .\artifacts\desktop-import.json
+```
+
+The source application must be stopped. The packaged application acquires the
+source and destination leases, verifies and snapshots the source, migrates a
+staged copy, compares semantic inventories, and atomically publishes the new
+ledger. It refuses to overwrite an existing destination.
+
 An immutable version can be staged without publishing any launch link:
 
 ```powershell

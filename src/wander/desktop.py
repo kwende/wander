@@ -12,7 +12,7 @@ import threading
 import time
 import traceback
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
@@ -32,6 +32,7 @@ from wander.persistence import (
     SingleInstanceLock,
     backup_before_schema_migration,
     check_database_compatibility,
+    import_legacy_database,
 )
 from wander.store import SCHEMA_VERSION, WanderStore
 from wander.web import create_server
@@ -335,11 +336,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--share-base-url")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--check-database", type=Path)
+    parser.add_argument("--import-legacy-database", type=Path)
     parser.add_argument("--diagnostic-output", type=Path)
     arguments = parser.parse_args(argv)
-    if arguments.self_test and arguments.check_database:
-        parser.error("--self-test and --check-database are mutually exclusive")
-    if (arguments.self_test or arguments.check_database) and not arguments.diagnostic_output:
+    diagnostic_modes = (
+        bool(arguments.self_test),
+        arguments.check_database is not None,
+        arguments.import_legacy_database is not None,
+    )
+    if sum(diagnostic_modes) > 1:
+        parser.error("diagnostic modes are mutually exclusive")
+    if any(diagnostic_modes) and not arguments.diagnostic_output:
         parser.error("diagnostic modes require --diagnostic-output")
     if arguments.self_test:
         try:
@@ -364,6 +371,25 @@ def main(argv: list[str] | None = None) -> int:
         _write_diagnostic(arguments.diagnostic_output, {"status": "ok", **report})
         return 0 if report["compatible"] else 2
     database_path = arguments.database or default_database_path()
+    if arguments.import_legacy_database:
+        try:
+            receipt = import_legacy_database(
+                arguments.import_legacy_database,
+                database_path,
+                arguments.backups_directory
+                or backup_directory_for_database(database_path),
+            )
+        except Exception as error:
+            _write_diagnostic(
+                arguments.diagnostic_output,
+                {"status": "error", "error": str(error), "traceback": traceback.format_exc()},
+            )
+            return 1
+        _write_diagnostic(
+            arguments.diagnostic_output,
+            {"status": "ok", "operation": "legacy-import", **asdict(receipt)},
+        )
+        return 0
     try:
         run_desktop(
             arguments.host,
