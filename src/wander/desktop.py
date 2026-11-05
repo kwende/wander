@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -19,8 +20,14 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from wander.mcp_server import configure_mcp_server, release_mcp_server
-from wander.paths import default_database_path
-from wander.store import WanderStore
+from wander.paths import backup_directory_for_database, default_database_path
+from wander.persistence import (
+    InstanceAlreadyRunningError,
+    PersistenceError,
+    SingleInstanceLock,
+    backup_before_schema_migration,
+)
+from wander.store import SCHEMA_VERSION, WanderStore
 from wander.web import create_server
 
 
@@ -34,6 +41,7 @@ class DesktopHost:
     store: WanderStore
     mcp_transport: uvicorn.Server
     mcp_port: int
+    instance_lock: SingleInstanceLock
     thread: threading.Thread | None = None
     mcp_thread: threading.Thread | None = None
     mcp_error: BaseException | None = field(default=None, init=False)
@@ -46,14 +54,32 @@ class DesktopHost:
         database_path: Path,
         share_base_url: str | None = None,
         mcp_port: int = 8766,
+        backups_directory: Path | None = None,
     ) -> DesktopHost:
+        instance_lock = SingleInstanceLock(database_path)
         try:
+            instance_lock.acquire()
+        except InstanceAlreadyRunningError as error:
+            raise DesktopStartupError(
+                "Wander is already running with this ledger. Use the existing window."
+            ) from error
+        try:
+            backup_before_schema_migration(
+                database_path,
+                backups_directory or backup_directory_for_database(database_path),
+                SCHEMA_VERSION,
+            )
             store = WanderStore(database_path)
-        except OSError as error:
+        except (OSError, sqlite3.Error, PersistenceError) as error:
+            instance_lock.release()
             raise DesktopStartupError(
                 f"Wander could not open its database at {database_path}: {error}"
             ) from error
-        mcp = configure_mcp_server(store)
+        try:
+            mcp = configure_mcp_server(store)
+        except Exception:
+            instance_lock.release()
+            raise
         server: ThreadingHTTPServer | None = None
         try:
             server = create_server(
@@ -81,6 +107,7 @@ class DesktopHost:
             if server is not None:
                 server.server_close()
             release_mcp_server(store)
+            instance_lock.release()
             raise DesktopStartupError(
                 f"Wander could not configure its listeners: {error}. "
                 "Another Wander instance or application may already own that address."
@@ -89,8 +116,9 @@ class DesktopHost:
             if server is not None:
                 server.server_close()
             release_mcp_server(store)
+            instance_lock.release()
             raise
-        return cls(server, store, mcp_transport, mcp_port)
+        return cls(server, store, mcp_transport, mcp_port, instance_lock)
 
     @property
     def local_url(self) -> str:
@@ -184,6 +212,7 @@ class DesktopHost:
         self.thread = None
         if mcp_stopped:
             release_mcp_server(self.store)
+            self.instance_lock.release()
             return
         raise RuntimeError("Wander's MCP server did not stop cleanly")
 
@@ -194,9 +223,17 @@ def run_desktop(
     database_path: Path,
     share_base_url: str | None = None,
     mcp_port: int = 8766,
+    backups_directory: Path | None = None,
     webview_module: ModuleType | None = None,
 ) -> None:
-    desktop = DesktopHost.create(host, port, database_path, share_base_url, mcp_port)
+    desktop = DesktopHost.create(
+        host,
+        port,
+        database_path,
+        share_base_url,
+        mcp_port,
+        backups_directory,
+    )
     try:
         desktop.start()
         if webview_module is None:
@@ -229,16 +266,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--mcp-port", type=int, default=8766)
-    parser.add_argument("--database", type=Path, default=default_database_path())
+    parser.add_argument("--database", type=Path)
     parser.add_argument("--share-base-url")
     arguments = parser.parse_args(argv)
+    database_path = arguments.database or default_database_path()
     try:
         run_desktop(
             arguments.host,
             arguments.port,
-            arguments.database,
+            database_path,
             arguments.share_base_url,
             arguments.mcp_port,
+            backup_directory_for_database(database_path),
         )
     except Exception as error:
         show_startup_error(str(error))

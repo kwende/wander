@@ -16,14 +16,19 @@ ledger and the dashboard has no Mathom write interface.
 ```powershell
 Set-Location D:\repos\wander
 & .\scripts\setup.ps1
-& .\.venv\Scripts\wander-desktop.exe
+& .\scripts\start-web.ps1
 ```
 
 The desktop entry point starts the HTTP dashboard and a stateless Streamable
 HTTP MCP endpoint in-process, verifies both protocols, and then opens a native
 WebView2 window. Closing the window shuts down both listeners cleanly. During
 development, `scripts\start-web.ps1` remains as a compatibility launcher for
-the same desktop application and no longer opens the ledger independently.
+the same desktop application and passes the repository ledger explicitly. The
+desktop entry point's production default is
+`%LOCALAPPDATA%\Wander\data\wander.db`; `WANDER_DB` is deliberately ignored so
+an ambient process environment cannot redirect the authoritative ledger. The
+real repository ledger is not migrated to that location until the installation
+cutover is run.
 
 The dashboard listens on all network interfaces at port `8765`. Open
 `http://localhost:8765` on this machine or `http://<host-ip>:8765` from another

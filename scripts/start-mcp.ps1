@@ -18,10 +18,6 @@ if (-not (Test-Path -LiteralPath $python)) {
     throw 'Wander is not installed. Run scripts\setup.ps1 first.'
 }
 
-if (-not $env:WANDER_DB) {
-    $env:WANDER_DB = Join-Path $repoRoot 'data\wander.db'
-}
-
 & $python -m wander.mcp_server
 exit $LASTEXITCODE
 

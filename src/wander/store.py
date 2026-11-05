@@ -41,6 +41,7 @@ JAUNT_TRANSITIONS = {
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
+SCHEMA_VERSION = 4
 
 
 class WanderError(Exception):
@@ -82,6 +83,14 @@ class WanderStore:
 
     def initialize(self) -> None:
         with self._connection() as connection:
+            database_schema_version = int(
+                connection.execute("PRAGMA user_version").fetchone()[0]
+            )
+            if database_schema_version > SCHEMA_VERSION:
+                raise ConflictError(
+                    f"Wander database schema {database_schema_version} is newer than "
+                    f"this application supports ({SCHEMA_VERSION})"
+                )
             self._migrate_project_schema(connection)
             connection.executescript(
                 """
@@ -224,7 +233,7 @@ class WanderStore:
             if "owner_thread_id" not in journey_columns:
                 connection.execute("ALTER TABLE journeys ADD COLUMN owner_thread_id TEXT")
             self._migrate_jaunt_schema(connection)
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
 
     @staticmethod

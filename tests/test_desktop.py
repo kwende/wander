@@ -5,11 +5,13 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import closing
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -155,6 +157,70 @@ class DesktopHostTests(unittest.TestCase):
                 rf"could not open its database at {re.escape(str(database_path))}",
             ):
                 DesktopHost.create("127.0.0.1", 0, database_path)
+
+    def test_second_host_is_rejected_before_it_can_open_the_same_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+            first = DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            try:
+                with self.assertRaisesRegex(DesktopStartupError, "already running"):
+                    DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            finally:
+                first.stop()
+
+            replacement = DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            replacement.stop()
+
+    def test_schema_backup_precedes_store_initialization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database_path = root / "wander.db"
+            backups = root / "safe-copies"
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
+                connection.execute("INSERT INTO sentinel VALUES ('before migration')")
+                connection.execute("PRAGMA user_version = 3")
+                connection.commit()
+
+            host = DesktopHost.create(
+                "127.0.0.1",
+                0,
+                database_path,
+                mcp_port=0,
+                backups_directory=backups,
+            )
+            host.stop()
+
+            created_backups = list(backups.glob("pre-schema-3-to-4-*.db"))
+            self.assertEqual(1, len(created_backups))
+            with closing(sqlite3.connect(created_backups[0])) as connection:
+                self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
+                self.assertEqual(
+                    "before migration",
+                    connection.execute("SELECT value FROM sentinel").fetchone()[0],
+                )
+            with closing(sqlite3.connect(database_path)) as connection:
+                self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def test_newer_schema_is_rejected_without_mutation_and_releases_the_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "future.db"
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute("CREATE TABLE future_data (value TEXT NOT NULL)")
+                connection.execute("INSERT INTO future_data VALUES ('preserve me')")
+                connection.execute("PRAGMA user_version = 5")
+                connection.commit()
+
+            for _ in range(2):
+                with self.assertRaisesRegex(DesktopStartupError, "newer than"):
+                    DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
+                self.assertEqual(
+                    "preserve me",
+                    connection.execute("SELECT value FROM future_data").fetchone()[0],
+                )
 
     def test_native_window_wraps_the_in_process_server(self) -> None:
         calls: list[tuple[str, object]] = []
