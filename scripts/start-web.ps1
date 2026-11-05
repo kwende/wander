@@ -14,7 +14,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 $database = Join-Path $repoRoot 'data\wander.db'
-$arguments = @('-m', 'wander.web', '--host', $HostAddress, '--port', $Port, '--database', $database)
+$arguments = @('-m', 'wander.desktop', '--host', $HostAddress, '--port', $Port, '--database', $database)
 if ($ShareBaseUrl) {
     $arguments += @('--share-base-url', $ShareBaseUrl)
 }

@@ -1,23 +1,23 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "wander-workboard",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Keep a durable, visual workboard synchronized with ongoing Codex tasks.",
   "repository": "https://github.com/kwende/wander",
-  "keywords": ["planning", "checklist", "projects", "codex"],
+  "keywords": ["planning", "checklist", "journeys", "codex"],
   "extensions": {
     "com.openai": {
       "requires_local_executor": true,
       "interface": {
         "displayName": "Wander",
         "shortDescription": "Durable visual workboards for ongoing tasks",
-        "longDescription": "Create and maintain concise project checklists that survive across Codex turns, with detailed checkpoints retained behind the high-level view.",
+        "longDescription": "Create and maintain concise journey checklists that survive across Codex turns, with detailed checkpoints retained behind the high-level view.",
         "developerName": "Kwende",
         "category": "Productivity",
         "capabilities": ["Read", "Write"],
         "defaultPrompt": [
           "Make a Wander out of this task.",
-          "Use Wander to show where this project was, where it is, and what comes next."
+          "Use Wander to show where this journey was, where it is, and what comes next."
         ],
         "brandColor": "#66E3BC"
       }

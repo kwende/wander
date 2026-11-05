@@ -25,7 +25,7 @@ body {
   color: var(--text);
 }
 
-button, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 .topbar {
   display: flex;
@@ -73,7 +73,7 @@ h3 { margin-bottom: 0; font-size: 1.25rem; }
 
 .topbar-actions label { color: var(--muted); font-size: 0.85rem; }
 
-select, button {
+select, button, input, textarea {
   border: 1px solid var(--line);
   border-radius: 0.6rem;
   background: var(--panel);
@@ -83,6 +83,85 @@ select, button {
 
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
+input:focus, textarea:focus, select:focus, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quiet-button { background: transparent; }
+
+.jaunts-dialog {
+  width: min(72rem, calc(100vw - 2rem));
+  height: min(48rem, calc(100vh - 2rem));
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 2rem 8rem rgba(0, 0, 0, 0.65);
+}
+
+.jaunts-dialog::backdrop { background: rgba(2, 6, 10, 0.78); backdrop-filter: blur(4px); }
+.jaunts-shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.jaunts-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.35rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.jaunts-header h2 { margin-bottom: 0.3rem; }
+.jaunts-header p:last-child { margin-bottom: 0; color: var(--muted); }
+.jaunts-header .quiet-button { align-self: start; }
+.jaunts-layout { display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); min-height: 0; }
+.jaunts-sidebar {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+.jaunts-list-actions { display: flex; gap: 0.55rem; }
+.jaunts-list-actions > :first-child { flex: 1; }
+.completed-toggle { display: flex; align-items: center; gap: 0.45rem; margin: 1rem 0; color: var(--muted); font-size: 0.82rem; }
+.completed-toggle input { width: 1rem; height: 1rem; padding: 0; accent-color: var(--accent); }
+.jaunts-list { display: grid; gap: 0.5rem; }
+.jaunts-empty { padding: 2rem 0.5rem; color: var(--muted); text-align: center; }
+.jaunt-list-item {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.8rem;
+  text-align: left;
+}
+.jaunt-list-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jaunt-list-item span { overflow: hidden; color: var(--muted); font-size: 0.8rem; text-overflow: ellipsis; white-space: nowrap; }
+.jaunt-list-item small { color: var(--muted); font-size: 0.7rem; }
+.jaunt-list-item[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.jaunt-list-item[data-status="completed"] { opacity: 0.64; }
+.jaunt-editor { min-height: 0; overflow: auto; padding: clamp(1rem, 3vw, 2rem); }
+.jaunt-editor form { display: grid; gap: 0.55rem; }
+.jaunt-editor label { margin-top: 0.45rem; color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+.jaunt-editor input, .jaunt-editor textarea { width: 100%; background: var(--panel); }
+.jaunt-editor textarea { min-height: 15rem; resize: vertical; line-height: 1.5; }
+.jaunt-editor input[readonly], .jaunt-editor textarea[readonly] { opacity: 0.72; }
+.jaunt-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.status-chip { border-radius: 999px; background: var(--accent-soft); color: var(--accent); padding: 0.3rem 0.65rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.status-chip[data-status="completed"] { background: rgba(126, 182, 255, 0.12); color: var(--complete); }
+.jaunt-updated { color: var(--muted); font-size: 0.75rem; }
+.jaunt-message { min-height: 1.25rem; margin: 0.25rem 0 0; color: var(--muted); font-size: 0.8rem; }
+.jaunt-form-actions { display: flex; gap: 0.55rem; }
+.jaunt-history-section { margin-top: 1.75rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
+.jaunt-history-section h3 { margin-bottom: 0.85rem; }
+.jaunt-history { display: grid; gap: 0.55rem; }
+.jaunt-history-entry { border-left: 2px solid var(--line); padding: 0.3rem 0 0.3rem 0.75rem; }
+.jaunt-history-entry strong { display: block; font-size: 0.85rem; }
+.jaunt-history-entry span { color: var(--muted); font-size: 0.72rem; }
 
 .dashboard {
   max-width: 1440px;
@@ -102,20 +181,20 @@ button:hover { border-color: var(--accent); }
   padding: clamp(1.4rem, 4vw, 2.5rem);
 }
 
-.project-title {
+.journey-title {
   display: flex;
   gap: 0.4rem;
   margin-bottom: 0.75rem;
   font-size: 1.1rem;
 }
 
-.project-title span,
+.journey-title span,
 .objective > span:first-child {
   color: var(--muted);
   font-weight: 500;
 }
 
-.project-title strong { font-weight: 650; }
+.journey-title strong { font-weight: 650; }
 
 .share-link {
   align-self: center;
@@ -145,7 +224,7 @@ button:hover { border-color: var(--accent); }
 
 .objective > [data-field="objective"] { display: block; }
 
-.project-links {
+.journey-links {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 0.7rem;
@@ -153,7 +232,7 @@ button:hover { border-color: var(--accent); }
   margin-top: 1rem;
 }
 
-.project-links > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.journey-links > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .link-list, .commit-links { display: flex; flex-wrap: wrap; gap: 0.45rem 0.75rem; }
 .link-list a, .commit-links a { color: var(--accent); text-decoration: none; }
 .link-list a:hover, .commit-links a:hover { text-decoration: underline; }
@@ -312,6 +391,9 @@ button:hover { border-color: var(--accent); }
   .topbar { align-items: stretch; flex-direction: column; }
   .topbar-actions { align-items: stretch; flex-wrap: wrap; }
   .topbar-actions select { flex: 1; }
+  .jaunts-layout { grid-template-columns: 1fr; overflow: auto; }
+  .jaunts-sidebar { max-height: 16rem; border-right: 0; border-bottom: 1px solid var(--line); }
+  .jaunt-editor { overflow: visible; }
 }
 
 @media (prefers-reduced-motion: reduce) {

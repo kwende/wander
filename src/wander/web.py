@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import argparse
+import ipaddress
 import json
-import os
 import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from wander.store import NotFoundError, ValidationError, WanderStore
+from wander.store import ConflictError, NotFoundError, ValidationError, WanderStore
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
@@ -19,6 +18,15 @@ CONTENT_TYPES = {
     ".js": "text/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
 }
+MAX_JSON_BODY_BYTES = 1_000_000
+
+
+def is_loopback_address(value: str) -> bool:
+    normalized = value.removeprefix("::ffff:")
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -45,23 +53,130 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "application/json; charset=utf-8",
         )
 
+    def _require_local_jaunts(self) -> None:
+        if not is_loopback_address(self.client_address[0]):
+            raise PermissionError("Jaunts are available only from localhost")
+
+    def _read_json_object(self) -> dict[str, object]:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as error:
+            raise ValidationError("Invalid Content-Length") from error
+        if content_length <= 0 or content_length > MAX_JSON_BODY_BYTES:
+            raise ValidationError("JSON body is required and must be at most 1 MB")
+        try:
+            value = json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise ValidationError("Request body must be valid JSON") from error
+        if not isinstance(value, dict):
+            raise ValidationError("Request body must be a JSON object")
+        return value
+
+    @staticmethod
+    def _expected_version(value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValidationError("expected_version must be a positive integer")
+        return value
+
+    def _send_api_error(self, error: Exception) -> None:
+        if isinstance(error, PermissionError):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": str(error)})
+        elif isinstance(error, NotFoundError):
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": str(error)})
+        elif isinstance(error, ConflictError):
+            self._send_json(HTTPStatus.CONFLICT, {"error": str(error)})
+        elif isinstance(error, ValidationError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        else:
+            raise error
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        self._send_json(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            {"error": "The dashboard is read-only. Mutate Wander through its MCP tools."},
-        )
+        path = unquote(urlparse(self.path).path)
+        try:
+            if path == "/api/jaunts":
+                self._require_local_jaunts()
+                body = self._read_json_object()
+                title = body.get("title")
+                notes = body.get("notes", "")
+                if not isinstance(title, str) or not isinstance(notes, str):
+                    raise ValidationError("title and notes must be strings")
+                mutation = self.store.create_jaunt(title, notes)
+                self._send_json(
+                    HTTPStatus.CREATED,
+                    self.store.get_jaunt(mutation["jaunt"]),
+                )
+                return
+            if path.startswith("/api/jaunts/"):
+                self._require_local_jaunts()
+                jaunt_id, action = self._parse_jaunt_action_path(path)
+                body = self._read_json_object()
+                expected_version = self._expected_version(body.get("expected_version"))
+                summary = body.get("summary")
+                if summary is not None and not isinstance(summary, str):
+                    raise ValidationError("summary must be a string")
+                if action == "complete":
+                    self.store.complete_jaunt(
+                        jaunt_id,
+                        expected_version,
+                        summary or "Completed jaunt",
+                    )
+                elif action == "reopen":
+                    self.store.reopen_jaunt(
+                        jaunt_id,
+                        expected_version,
+                        summary or "Reopened jaunt",
+                    )
+                else:
+                    raise ValidationError("Unknown jaunt action")
+                self._send_json(HTTPStatus.OK, self.store.get_jaunt(jaunt_id))
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                {"error": "Journey dashboard writes are available only through MCP."},
+            )
+        except (ConflictError, NotFoundError, PermissionError, ValidationError) as error:
+            self._send_api_error(error)
 
     def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        self.do_POST()
+        self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Method not allowed"})
 
     def do_PATCH(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        self.do_POST()
+        path = unquote(urlparse(self.path).path)
+        try:
+            if path.startswith("/api/jaunts/") and path.count("/") == 3:
+                self._require_local_jaunts()
+                jaunt_id = path.removeprefix("/api/jaunts/")
+                if not jaunt_id:
+                    raise ValidationError("Invalid jaunt path")
+                body = self._read_json_object()
+                expected_version = self._expected_version(body.get("expected_version"))
+                title = body.get("title")
+                notes = body.get("notes")
+                if title is not None and not isinstance(title, str):
+                    raise ValidationError("title must be a string")
+                if notes is not None and not isinstance(notes, str):
+                    raise ValidationError("notes must be a string")
+                self.store.update_jaunt(
+                    jaunt_id,
+                    expected_version,
+                    title=title,
+                    notes=notes,
+                )
+                self._send_json(HTTPStatus.OK, self.store.get_jaunt(jaunt_id))
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                {"error": "Journey dashboard writes are available only through MCP."},
+            )
+        except (ConflictError, NotFoundError, PermissionError, ValidationError) as error:
+            self._send_api_error(error)
 
     def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        self.do_POST()
+        self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "Method not allowed"})
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        path = unquote(urlparse(self.path).path)
+        parsed_request = urlparse(self.path)
+        path = unquote(parsed_request.path)
         try:
             if path == "/api/health":
                 self._send_json(
@@ -69,24 +184,57 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {
                         "status": "ok",
                         "mode": "read-only",
+                        "jaunts_mode": (
+                            "local-authoring"
+                            if is_loopback_address(self.client_address[0])
+                            else "unavailable"
+                        ),
                         "share_base_url": self.share_base_url,
                     },
                 )
                 return
-            if path == "/api/projects":
-                self._send_json(HTTPStatus.OK, self.store.list_projects())
+            if path == "/api/jaunts":
+                self._require_local_jaunts()
+                status_values = parse_qs(parsed_request.query).get("status", [])
+                if len(status_values) > 1:
+                    raise ValidationError("status may be specified only once")
+                status = status_values[0] if status_values else None
+                self._send_json(HTTPStatus.OK, self.store.list_jaunts(status))
                 return
-            if path.startswith("/api/projects/"):
-                project = path.removeprefix("/api/projects/")
-                if not project or "/" in project:
-                    raise ValidationError("Invalid project path")
-                self._send_json(HTTPStatus.OK, self.store.get_project(project))
+            if path.startswith("/api/jaunts/"):
+                self._require_local_jaunts()
+                jaunt_id = path.removeprefix("/api/jaunts/")
+                if not jaunt_id or "/" in jaunt_id:
+                    raise ValidationError("Invalid jaunt path")
+                self._send_json(HTTPStatus.OK, self.store.get_jaunt(jaunt_id))
+                return
+            if path in {"/api/journeys", "/api/projects"}:
+                self._send_json(HTTPStatus.OK, self.store.list_journeys())
+                return
+            journey_prefix = next(
+                (
+                    prefix
+                    for prefix in ("/api/journeys/", "/api/projects/")
+                    if path.startswith(prefix)
+                ),
+                None,
+            )
+            if journey_prefix:
+                journey = path.removeprefix(journey_prefix)
+                if not journey or "/" in journey:
+                    raise ValidationError("Invalid journey path")
+                self._send_json(HTTPStatus.OK, self.store.get_journey(journey))
                 return
             self._serve_static(path)
-        except NotFoundError as error:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": str(error)})
-        except ValidationError as error:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        except (NotFoundError, PermissionError, ValidationError) as error:
+            self._send_api_error(error)
+
+    @staticmethod
+    def _parse_jaunt_action_path(path: str) -> tuple[str, str]:
+        parts = path.removeprefix("/api/jaunts/").split("/")
+        if len(parts) != 2 or not all(parts):
+            raise ValidationError("Invalid jaunt action path")
+        return parts[0], parts[1]
 
     def _serve_static(self, path: str) -> None:
         relative = "index.html" if path == "/" else path.lstrip("/")
@@ -156,39 +304,11 @@ def create_server(
     return server
 
 
-def default_database_path() -> Path:
-    configured = os.environ.get("WANDER_DB")
-    if configured:
-        return Path(configured)
-    return Path(__file__).resolve().parents[2] / "data" / "wander.db"
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve the read-only Wander dashboard")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--database", type=Path, default=default_database_path())
-    parser.add_argument(
-        "--share-base-url",
-        default=os.environ.get("WANDER_SHARE_BASE_URL"),
-        help="Absolute network-reachable origin advertised by the Share action",
+    raise RuntimeError(
+        "The Wander dashboard is hosted by the Wander desktop application. "
+        "Start Wander instead."
     )
-    arguments = parser.parse_args()
-    server = create_server(
-        arguments.host,
-        arguments.port,
-        WanderStore(arguments.database),
-        arguments.share_base_url,
-    )
-    print(f"Wander dashboard: http://{arguments.host}:{server.server_port}")
-    print(f"Wander share URL: {server.RequestHandlerClass.share_base_url}")
-    print("The HTTP surface is read-only; writes are available only through MCP.")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
 
 
 if __name__ == "__main__":

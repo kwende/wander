@@ -14,8 +14,9 @@
       <p class="brand-tagline">Not all who wander are lost.</p>
     </div>
     <div class="topbar-actions">
-      <label id="project-select-label" for="project-select">Project</label>
-      <select id="project-select" aria-label="Select project"></select>
+      <button id="jaunts-button" type="button" hidden>Jaunts</button>
+      <label id="journey-select-label" for="journey-select">Journey</label>
+      <select id="journey-select" aria-label="Select journey"></select>
       <button id="refresh-button" type="button">Refresh</button>
     </div>
   </header>
@@ -28,7 +29,58 @@
     </section>
   </main>
 
-  <template id="project-template">
+  <dialog id="jaunts-dialog" class="jaunts-dialog" aria-labelledby="jaunts-title">
+    <div class="jaunts-shell">
+      <header class="jaunts-header">
+        <div>
+          <p class="eyebrow">Quick work</p>
+          <h2 id="jaunts-title">Jaunts</h2>
+          <p>Loose tasks and working notes. Promote only when structure becomes useful.</p>
+        </div>
+        <button id="jaunts-close" class="quiet-button" type="button" aria-label="Close Jaunts">Close</button>
+      </header>
+
+      <div class="jaunts-layout">
+        <aside class="jaunts-sidebar">
+          <div class="jaunts-list-actions">
+            <button id="jaunt-new" type="button">New Jaunt</button>
+            <button id="jaunts-refresh" class="quiet-button" type="button">Refresh</button>
+          </div>
+          <label class="completed-toggle">
+            <input id="jaunts-show-completed" type="checkbox">
+            Show completed
+          </label>
+          <div id="jaunts-list" class="jaunts-list" role="list"></div>
+        </aside>
+
+        <section class="jaunt-editor" aria-live="polite">
+          <form id="jaunt-form">
+            <div class="jaunt-editor-heading">
+              <span id="jaunt-status" class="status-chip">New</span>
+              <span id="jaunt-updated" class="jaunt-updated"></span>
+            </div>
+            <label for="jaunt-title">Title</label>
+            <input id="jaunt-title" name="title" type="text" maxlength="240" required>
+            <label for="jaunt-notes">Notes</label>
+            <textarea id="jaunt-notes" name="notes" rows="15" placeholder="Drop links, observations, reminders, and rough notes here."></textarea>
+            <p id="jaunt-message" class="jaunt-message" role="status"></p>
+            <div class="jaunt-form-actions">
+              <button id="jaunt-save" type="submit">Create Jaunt</button>
+              <button id="jaunt-complete" class="quiet-button" type="button" hidden>Complete</button>
+              <button id="jaunt-reopen" class="quiet-button" type="button" hidden>Reopen</button>
+            </div>
+          </form>
+
+          <section id="jaunt-history-section" class="jaunt-history-section" hidden>
+            <h3>History</h3>
+            <div id="jaunt-history" class="jaunt-history"></div>
+          </section>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <template id="journey-template">
     <section class="hero panel">
       <div>
         <div class="status-line">
@@ -36,18 +88,18 @@
           <span data-field="status"></span>
           <span class="version" data-field="version"></span>
         </div>
-        <p class="project-title">
-          <span>Project:</span>
+        <p class="journey-title">
+          <span>Journey:</span>
           <strong data-field="title"></strong>
           <a class="share-link" data-action="share" href="#">Share</a>
         </p>
         <p class="objective">
-          <span>Project Description:</span>
+          <span>Journey Description:</span>
           <span data-field="objective"></span>
         </p>
-        <div class="project-links" data-section="project-links" hidden>
+        <div class="journey-links" data-section="journey-links" hidden>
           <span>Links:</span>
-          <div class="link-list" data-list="project-links"></div>
+          <div class="link-list" data-list="journey-links"></div>
         </div>
       </div>
     </section>
