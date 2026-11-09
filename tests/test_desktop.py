@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from contextlib import closing
@@ -86,6 +87,60 @@ class DesktopHostTests(unittest.TestCase):
                 socket.create_connection(("127.0.0.1", host.server.server_port), timeout=0.2)
             with self.assertRaises(OSError):
                 socket.create_connection(("127.0.0.1", mcp_port), timeout=0.2)
+
+    def test_startup_and_shutdown_snapshot_only_changed_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "wander.db"
+            backups = root / "backups"
+            host = self.create_host(
+                "127.0.0.1",
+                0,
+                database,
+                mcp_port=0,
+                backups_directory=backups,
+            )
+            host.start()
+            snapshots = backups / "snapshots"
+            self.assertEqual(1, len(list(snapshots.glob("ledger-snapshot-*.json"))))
+
+            host.store.create_journey(
+                "after-start", "After start", "Require a shutdown snapshot"
+            )
+            host.stop()
+
+            self.assertEqual(2, len(list(snapshots.glob("ledger-snapshot-*.json"))))
+
+    def test_runtime_snapshot_worker_captures_changed_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            backups = root / "backups"
+            host = self.create_host(
+                "127.0.0.1",
+                0,
+                root / "wander.db",
+                mcp_port=0,
+                backups_directory=backups,
+                snapshot_interval_seconds=0.05,
+            )
+            try:
+                host.start()
+                host.store.create_jaunt("Capture during runtime")
+                manifests = backups / "snapshots"
+                deadline = time.monotonic() + 2
+                while (
+                    len(list(manifests.glob("ledger-snapshot-*.json"))) < 2
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.02)
+
+                self.assertEqual(
+                    2,
+                    len(list(manifests.glob("ledger-snapshot-*.json"))),
+                )
+                self.assertIsNone(host.snapshot_error)
+            finally:
+                host.stop()
 
     def test_ui_and_mcp_share_the_application_store(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

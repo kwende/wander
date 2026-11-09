@@ -116,6 +116,22 @@ class LedgerIdentityReceipt:
     registered_at: str
 
 
+@dataclass(frozen=True)
+class SnapshotManifest:
+    snapshot_file: str
+    ledger_id: str
+    schema_version: int
+    created_at: str
+    size_bytes: int
+    sha256: str
+    inventory: dict[str, Any]
+
+
+DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 60 * 60
+DEFAULT_SNAPSHOT_RETENTION = 24 * 7
+SNAPSHOT_PREFIX = "ledger-snapshot-"
+
+
 def _timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
 
@@ -364,6 +380,189 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise PersistenceError(f"Wander identity document is not an object: {path}")
     return payload
+
+
+def _ledger_id(connection: sqlite3.Connection) -> str:
+    if not _table_exists(connection, "ledger_metadata"):
+        raise PersistenceError("Wander ledger metadata is missing")
+    row = connection.execute(
+        "SELECT ledger_id FROM ledger_metadata WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        raise PersistenceError("Wander ledger identity is missing")
+    return str(row[0])
+
+
+def _snapshot_manifest_path(snapshot_path: Path) -> Path:
+    return snapshot_path.with_suffix(".json")
+
+
+def _load_snapshot_manifest(manifest_path: Path) -> SnapshotManifest:
+    document = _read_json_object(manifest_path)
+    try:
+        inventory = document["inventory"]
+        if not isinstance(inventory, dict):
+            raise TypeError("inventory is not an object")
+        return SnapshotManifest(
+            snapshot_file=str(document["snapshot_file"]),
+            ledger_id=str(document["ledger_id"]),
+            schema_version=int(document["schema_version"]),
+            created_at=str(document["created_at"]),
+            size_bytes=int(document["size_bytes"]),
+            sha256=str(document["sha256"]),
+            inventory=inventory,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise PersistenceError(
+            f"Invalid Wander snapshot manifest {manifest_path}: {error}"
+        ) from error
+
+
+def verify_snapshot(snapshot_path: str | Path) -> SnapshotManifest:
+    snapshot = Path(snapshot_path).resolve()
+    manifest_path = _snapshot_manifest_path(snapshot)
+    if not snapshot.is_file():
+        raise PersistenceError(f"Wander snapshot does not exist: {snapshot}")
+    if not manifest_path.is_file():
+        raise PersistenceError(f"Wander snapshot manifest does not exist: {manifest_path}")
+    manifest = _load_snapshot_manifest(manifest_path)
+    if manifest.snapshot_file != snapshot.name:
+        raise PersistenceError(
+            f"Wander snapshot manifest names {manifest.snapshot_file}, not {snapshot.name}"
+        )
+    if snapshot.stat().st_size != manifest.size_bytes:
+        raise PersistenceError(f"Wander snapshot size does not match its manifest: {snapshot}")
+    if _sha256(snapshot) != manifest.sha256:
+        raise PersistenceError(f"Wander snapshot hash does not match its manifest: {snapshot}")
+    with closing(_open_read_only(snapshot)) as connection:
+        _assert_integrity(connection, str(snapshot))
+        if _schema_version(connection) != manifest.schema_version:
+            raise PersistenceError(
+                f"Wander snapshot schema does not match its manifest: {snapshot}"
+            )
+        if _ledger_id(connection) != manifest.ledger_id:
+            raise PersistenceError(
+                f"Wander snapshot ledger identity does not match its manifest: {snapshot}"
+            )
+        if database_inventory(connection) != manifest.inventory:
+            raise PersistenceError(
+                f"Wander snapshot inventory does not match its manifest: {snapshot}"
+            )
+    return manifest
+
+
+def _latest_verified_snapshot(
+    snapshots_directory: Path,
+    ledger_id: str,
+) -> SnapshotManifest | None:
+    manifests = sorted(
+        snapshots_directory.glob(f"{SNAPSHOT_PREFIX}*.json"),
+        reverse=True,
+    )
+    for manifest_path in manifests:
+        snapshot_path = manifest_path.with_suffix(".db")
+        try:
+            manifest = verify_snapshot(snapshot_path)
+        except PersistenceError:
+            continue
+        if manifest.ledger_id == ledger_id:
+            return manifest
+    return None
+
+
+def prune_snapshots(snapshots_directory: str | Path, retention: int) -> list[Path]:
+    if retention < 1:
+        raise ValueError("Snapshot retention must be at least one")
+    snapshots = Path(snapshots_directory).resolve()
+    manifests = sorted(
+        snapshots.glob(f"{SNAPSHOT_PREFIX}*.json"),
+        reverse=True,
+    )
+    removed: list[Path] = []
+    for manifest_path in manifests[retention:]:
+        snapshot_path = manifest_path.with_suffix(".db")
+        manifest_path.unlink(missing_ok=True)
+        _remove_sqlite_files(snapshot_path)
+        removed.append(snapshot_path)
+    return removed
+
+
+def create_verified_snapshot(
+    database_path: str | Path,
+    snapshots_directory: str | Path,
+    *,
+    retention: int = DEFAULT_SNAPSHOT_RETENTION,
+) -> Path | None:
+    database = Path(database_path).resolve()
+    snapshots = Path(snapshots_directory).resolve()
+    if not database.is_file():
+        raise PersistenceError(f"Wander database does not exist: {database}")
+    with closing(_open_read_only(database)) as connection:
+        _assert_integrity(connection, str(database))
+        ledger_id = _ledger_id(connection)
+        schema_version = _schema_version(connection)
+        inventory = database_inventory(connection)
+    latest = _latest_verified_snapshot(snapshots, ledger_id)
+    if (
+        latest is not None
+        and latest.schema_version == schema_version
+        and latest.inventory == inventory
+    ):
+        return None
+
+    snapshots.mkdir(parents=True, exist_ok=True)
+    snapshot = snapshots / f"{SNAPSHOT_PREFIX}{_timestamp()}.db"
+    manifest_path = _snapshot_manifest_path(snapshot)
+    try:
+        _backup_database(database, snapshot)
+        with closing(_open_read_only(snapshot)) as connection:
+            _assert_integrity(connection, str(snapshot))
+            snapshot_ledger_id = _ledger_id(connection)
+            snapshot_schema = _schema_version(connection)
+            snapshot_inventory = database_inventory(connection)
+        if snapshot_ledger_id != ledger_id:
+            raise PersistenceError("Wander snapshot changed ledger identity during backup")
+        if snapshot_schema != schema_version:
+            raise PersistenceError("Wander snapshot changed schema during backup")
+        manifest = SnapshotManifest(
+            snapshot_file=snapshot.name,
+            ledger_id=snapshot_ledger_id,
+            schema_version=snapshot_schema,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            size_bytes=snapshot.stat().st_size,
+            sha256=_sha256(snapshot),
+            inventory=snapshot_inventory,
+        )
+        _write_json_atomic(asdict(manifest), manifest_path)
+        verify_snapshot(snapshot)
+        prune_snapshots(snapshots, retention)
+        return snapshot
+    except BaseException:
+        manifest_path.unlink(missing_ok=True)
+        _remove_sqlite_files(snapshot)
+        raise
+
+
+class SnapshotManager:
+    def __init__(
+        self,
+        database_path: str | Path,
+        snapshots_directory: str | Path,
+        *,
+        retention: int = DEFAULT_SNAPSHOT_RETENTION,
+    ):
+        if retention < 1:
+            raise ValueError("Snapshot retention must be at least one")
+        self.database_path = Path(database_path).resolve()
+        self.snapshots_directory = Path(snapshots_directory).resolve()
+        self.retention = retention
+
+    def create_if_changed(self) -> Path | None:
+        return create_verified_snapshot(
+            self.database_path,
+            self.snapshots_directory,
+            retention=self.retention,
+        )
 
 
 def new_ledger_is_authorized(database_path: str | Path) -> bool:

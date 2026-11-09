@@ -131,6 +131,16 @@ non-empty but now contains neither Journeys nor Jaunts. A pre-schema-5 imported
 ledger can establish its first identity only when its recorded import inventory
 still proves the current database descends from that import.
 
+The desktop application writes verified snapshots beneath
+`%LOCALAPPDATA%\Wander\backups\snapshots`. It snapshots before opening its
+listeners, hourly while running, and after stopping its writers during a clean
+shutdown. An unchanged semantic inventory is not copied again. Each snapshot is
+created with SQLite's backup API, reopened for integrity and foreign-key checks,
+hashed, and paired with a manifest containing its ledger identity, schema, and
+semantic inventory. The newest 168 changed generations are retained by default;
+`--snapshot-interval-seconds` and `--snapshot-retention` provide explicit
+runtime overrides.
+
 Each journey can expose ordered HTTP links beneath its description. The
 dashboard presents top-level work as a rolling horizon: **Now** for active or
 blocked work, **Next** for provisional known steps, and **Trail** for completed

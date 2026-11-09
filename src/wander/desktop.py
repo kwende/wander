@@ -27,8 +27,11 @@ from mcp.client.streamable_http import streamable_http_client
 from wander.mcp_server import configure_mcp_server, release_mcp_server
 from wander.paths import backup_directory_for_database, default_database_path
 from wander.persistence import (
+    DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    DEFAULT_SNAPSHOT_RETENTION,
     InstanceAlreadyRunningError,
     PersistenceError,
+    SnapshotManager,
     SingleInstanceLock,
     backup_before_schema_migration,
     check_database_compatibility,
@@ -53,9 +56,14 @@ class DesktopHost:
     mcp_transport: uvicorn.Server
     mcp_port: int
     instance_lock: SingleInstanceLock
+    snapshot_manager: SnapshotManager
+    snapshot_interval_seconds: float
     thread: threading.Thread | None = None
     mcp_thread: threading.Thread | None = None
+    snapshot_thread: threading.Thread | None = None
+    snapshot_stop: threading.Event = field(default_factory=threading.Event)
     mcp_error: BaseException | None = field(default=None, init=False)
+    snapshot_error: BaseException | None = field(default=None, init=False)
 
     @classmethod
     def create(
@@ -67,7 +75,11 @@ class DesktopHost:
         mcp_port: int = 8766,
         backups_directory: Path | None = None,
         allow_unregistered_ledger: bool = False,
+        snapshot_interval_seconds: float = DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+        snapshot_retention: int = DEFAULT_SNAPSHOT_RETENTION,
     ) -> DesktopHost:
+        if snapshot_interval_seconds <= 0:
+            raise ValueError("Snapshot interval must be greater than zero")
         database_path = database_path.resolve()
         backups_directory = (
             backups_directory or backup_directory_for_database(database_path)
@@ -160,7 +172,19 @@ class DesktopHost:
             release_mcp_server(store)
             instance_lock.release()
             raise
-        return cls(server, store, mcp_transport, mcp_port, instance_lock)
+        return cls(
+            server,
+            store,
+            mcp_transport,
+            mcp_port,
+            instance_lock,
+            SnapshotManager(
+                database_path,
+                backups_directory / "snapshots",
+                retention=snapshot_retention,
+            ),
+            snapshot_interval_seconds,
+        )
 
     @property
     def local_url(self) -> str:
@@ -176,6 +200,14 @@ class DesktopHost:
         except BaseException as error:
             self.mcp_error = error
 
+    def _run_snapshots(self) -> None:
+        while not self.snapshot_stop.wait(self.snapshot_interval_seconds):
+            try:
+                self.snapshot_manager.create_if_changed()
+                self.snapshot_error = None
+            except BaseException as error:
+                self.snapshot_error = error
+
     async def _probe_mcp(self) -> None:
         async with streamable_http_client(self.mcp_url) as (read, write):
             async with ClientSession(read, write) as session:
@@ -189,8 +221,19 @@ class DesktopHost:
             self.mcp_port = int(sockets[0].getsockname()[1])
 
     def start(self, timeout_seconds: float = 5.0) -> None:
-        if self.thread is not None or self.mcp_thread is not None:
+        if (
+            self.thread is not None
+            or self.mcp_thread is not None
+            or self.snapshot_thread is not None
+        ):
             raise RuntimeError("Wander desktop server is already started")
+        try:
+            self.snapshot_manager.create_if_changed()
+        except BaseException as error:
+            self.stop()
+            raise DesktopStartupError(
+                "Wander could not create and verify its startup snapshot"
+            ) from error
         self.thread = threading.Thread(
             target=self.server.serve_forever,
             name="wander-desktop-http",
@@ -225,6 +268,13 @@ class DesktopHost:
                 except Exception as error:
                     last_error = error
             if dashboard_healthy and mcp_healthy:
+                self.snapshot_stop.clear()
+                self.snapshot_thread = threading.Thread(
+                    target=self._run_snapshots,
+                    name="wander-desktop-snapshots",
+                    daemon=True,
+                )
+                self.snapshot_thread.start()
                 return
             time.sleep(0.05)
         self.stop()
@@ -237,6 +287,13 @@ class DesktopHost:
         ) from last_error
 
     def stop(self) -> None:
+        snapshot_thread = self.snapshot_thread
+        snapshot_was_running = snapshot_thread is not None
+        if snapshot_thread is not None and snapshot_thread.is_alive():
+            self.snapshot_stop.set()
+            snapshot_thread.join(timeout=30)
+        snapshot_stopped = snapshot_thread is None or not snapshot_thread.is_alive()
+        self.snapshot_thread = None
         mcp_thread = self.mcp_thread
         if mcp_thread is not None and mcp_thread.is_alive():
             self.mcp_transport.should_exit = True
@@ -252,10 +309,24 @@ class DesktopHost:
             thread.join(timeout=5)
         self.server.server_close()
         self.thread = None
-        if mcp_stopped:
+        snapshot_error: BaseException | None = None
+        if snapshot_was_running and snapshot_stopped:
+            try:
+                self.snapshot_manager.create_if_changed()
+                self.snapshot_error = None
+            except BaseException as error:
+                self.snapshot_error = error
+                snapshot_error = error
+        if mcp_stopped and snapshot_stopped:
             release_mcp_server(self.store)
             self.instance_lock.release()
+            if snapshot_error is not None:
+                raise RuntimeError(
+                    "Wander could not create and verify its shutdown snapshot"
+                ) from snapshot_error
             return
+        if not snapshot_stopped:
+            raise RuntimeError("Wander's snapshot worker did not stop cleanly")
         raise RuntimeError("Wander's MCP server did not stop cleanly")
 
 
@@ -268,6 +339,8 @@ def run_desktop(
     backups_directory: Path | None = None,
     webview_module: ModuleType | None = None,
     allow_unregistered_ledger: bool = False,
+    snapshot_interval_seconds: float = DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    snapshot_retention: int = DEFAULT_SNAPSHOT_RETENTION,
 ) -> None:
     desktop = DesktopHost.create(
         host,
@@ -277,6 +350,8 @@ def run_desktop(
         mcp_port,
         backups_directory,
         allow_unregistered_ledger,
+        snapshot_interval_seconds,
+        snapshot_retention,
     )
     try:
         desktop.start()
@@ -371,6 +446,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--database", type=Path)
     parser.add_argument("--backups-directory", type=Path)
     parser.add_argument("--share-base-url")
+    parser.add_argument(
+        "--snapshot-interval-seconds",
+        type=float,
+        default=DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    )
+    parser.add_argument(
+        "--snapshot-retention",
+        type=int,
+        default=DEFAULT_SNAPSHOT_RETENTION,
+    )
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--check-database", type=Path)
     parser.add_argument("--import-legacy-database", type=Path)
@@ -435,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
             arguments.share_base_url,
             arguments.mcp_port,
             arguments.backups_directory or backup_directory_for_database(database_path),
+            snapshot_interval_seconds=arguments.snapshot_interval_seconds,
+            snapshot_retention=arguments.snapshot_retention,
         )
     except Exception as error:
         show_startup_error(str(error))
