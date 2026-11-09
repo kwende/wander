@@ -125,6 +125,12 @@ class DesktopInstallerTests(unittest.TestCase):
         self.assertEqual("0.8.0+bbbbbbbb", state["active_version"])
         self.assertEqual("0.8.0+aaaaaaaa", state["previous_version"])
         self.assertFalse((self.data_root / "data" / "wander.db").exists())
+        authorization = self.data_root / "data" / "wander.new-ledger.json"
+        self.assertTrue(authorization.is_file())
+        self.assertEqual(
+            str((self.data_root / "data" / "wander.db").resolve()),
+            json.loads(authorization.read_text(encoding="utf-8-sig"))["database"],
+        )
         self.assertEqual("installed", second_result["action"])
         self.assertEqual(
             self.install_root / "versions" / "0.8.0+bbbbbbbb" / "Wander.cmd",
@@ -172,6 +178,34 @@ class DesktopInstallerTests(unittest.TestCase):
 
         self.assertIn("No migrated Wander ledger exists", result.stderr)
         self.assertFalse(self.install_root.exists())
+
+    def test_allow_new_ledger_does_not_override_a_missing_registered_ledger(self) -> None:
+        bundle = self.bundle("bundle", "7")
+        identity = self.data_root / "data" / "wander.identity.json"
+        identity.parent.mkdir(parents=True)
+        identity.write_text('{"ledger_id":"expected"}', encoding="utf-8")
+
+        result = self.run_script(
+            "install-desktop.ps1",
+            [
+                "-BundlePath",
+                str(bundle),
+                "-InstallRoot",
+                str(self.install_root),
+                "-DataRoot",
+                str(self.data_root),
+                "-DesktopDirectory",
+                str(self.desktop),
+                "-StartMenuDirectory",
+                str(self.programs),
+                "-SkipWebView2Check",
+                "-AllowNewLedger",
+            ],
+            expect_success=False,
+        )
+
+        self.assertIn("Restore the ledger instead of creating a replacement", result.stderr)
+        self.assertFalse((self.data_root / "data" / "wander.new-ledger.json").exists())
 
     def test_version_directory_is_immutable(self) -> None:
         bundle = self.bundle("bundle", "d")
@@ -292,7 +326,7 @@ class DesktopInstallerTests(unittest.TestCase):
         self.install(incompatible)
         self.install(current)
         database = self.data_root / "data" / "wander.db"
-        database.parent.mkdir(parents=True)
+        database.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(database)) as connection:
             connection.execute("PRAGMA user_version = 5")
         previous_state = (self.install_root / "install.json").read_bytes()

@@ -105,7 +105,15 @@ class ImportReceipt:
     destination_schema: int
     backup_sha256: str
     inventory: dict[str, Any]
+    ledger_id: str
     migrated_at: str
+
+
+@dataclass(frozen=True)
+class LedgerIdentityReceipt:
+    database: str
+    ledger_id: str
+    registered_at: str
 
 
 def _timestamp() -> str:
@@ -114,6 +122,16 @@ def _timestamp() -> str:
 
 def _temporary_path(destination: Path) -> Path:
     return destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+
+
+def identity_path_for_database(database_path: str | Path) -> Path:
+    database = Path(database_path).resolve()
+    return database.with_suffix(".identity.json")
+
+
+def new_ledger_authorization_path(database_path: str | Path) -> Path:
+    database = Path(database_path).resolve()
+    return database.with_suffix(".new-ledger.json")
 
 
 def _remove_sqlite_files(database_path: Path) -> None:
@@ -317,21 +335,191 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_receipt(receipt: ImportReceipt, receipt_path: Path) -> None:
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = _temporary_path(receipt_path)
+def _write_json_atomic(payload: object, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _temporary_path(destination)
     try:
         temporary.write_text(
-            json.dumps(asdict(receipt), indent=2, sort_keys=True) + "\n",
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        os.replace(temporary, receipt_path)
+        os.replace(temporary, destination)
     except BaseException:
         try:
             temporary.unlink()
         except FileNotFoundError:
             pass
         raise
+
+
+def _write_receipt(receipt: ImportReceipt, receipt_path: Path) -> None:
+    _write_json_atomic(asdict(receipt), receipt_path)
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise PersistenceError(f"Could not read Wander identity document {path}: {error}") from error
+    if not isinstance(payload, dict):
+        raise PersistenceError(f"Wander identity document is not an object: {path}")
+    return payload
+
+
+def new_ledger_is_authorized(database_path: str | Path) -> bool:
+    database = Path(database_path).resolve()
+    authorization_path = new_ledger_authorization_path(database)
+    if not authorization_path.is_file():
+        return False
+    authorization = _read_json_object(authorization_path)
+    if Path(str(authorization.get("database", ""))).resolve() != database:
+        raise PersistenceError("New-ledger authorization names a different database path")
+    return True
+
+
+def _matching_import_receipts(
+    database: Path,
+    backups_directory: Path,
+) -> list[dict[str, Any]]:
+    candidates = [database.parent.parent / "migration" / "first-import.json"]
+    if backups_directory.exists():
+        candidates.extend(sorted(backups_directory.glob("first-desktop-import-*.json")))
+    matches: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            payload = _read_json_object(candidate)
+            destination = Path(str(payload.get("destination", ""))).resolve()
+        except (OSError, PersistenceError):
+            continue
+        if destination == database:
+            matches.append(payload)
+    return matches
+
+
+def _receipt_proves_lineage(
+    receipt: dict[str, Any],
+    ledger_id: str,
+    inventory: dict[str, Any],
+) -> bool:
+    recorded_ledger_id = receipt.get("ledger_id")
+    if recorded_ledger_id is not None:
+        return recorded_ledger_id == ledger_id
+    recorded_inventory = receipt.get("inventory")
+    if not isinstance(recorded_inventory, dict):
+        return False
+    append_only_tables = (
+        "journeys",
+        "work_items",
+        "thread_references",
+        "checkpoints",
+        "events",
+        "jaunts",
+        "jaunt_events",
+    )
+    for table in append_only_tables:
+        previous = recorded_inventory.get(table)
+        current = inventory.get(table)
+        if not isinstance(previous, dict) or not isinstance(current, dict):
+            return False
+        if int(current.get("count", -1)) < int(previous.get("count", 0)):
+            return False
+    return True
+
+
+def preflight_ledger_identity(
+    database_path: str | Path,
+    backups_directory: str | Path,
+    *,
+    allow_unregistered_ledger: bool = False,
+) -> None:
+    database = Path(database_path).resolve()
+    if not database.is_file() or identity_path_for_database(database).is_file():
+        return
+    if allow_unregistered_ledger or new_ledger_is_authorized(database):
+        return
+    backups = Path(backups_directory).resolve()
+    with closing(_open_read_only(database)) as connection:
+        _assert_integrity(connection, str(database))
+        inventory = database_inventory(connection)
+        ledger_id = ""
+        if _table_exists(connection, "ledger_metadata"):
+            row = connection.execute(
+                "SELECT ledger_id FROM ledger_metadata WHERE singleton = 1"
+            ).fetchone()
+            if row is not None:
+                ledger_id = str(row[0])
+    receipts = _matching_import_receipts(database, backups)
+    if not any(_receipt_proves_lineage(receipt, ledger_id, inventory) for receipt in receipts):
+        raise PersistenceError(
+            "Wander refused an unregistered ledger because no verified import receipt "
+            "proves its lineage"
+        )
+
+
+def validate_or_register_ledger_identity(
+    store: Any,
+    database_path: str | Path,
+    backups_directory: str | Path,
+    *,
+    database_existed: bool,
+    allow_unregistered_ledger: bool = False,
+) -> LedgerIdentityReceipt:
+    database = Path(database_path).resolve()
+    backups = Path(backups_directory).resolve()
+    identity_path = identity_path_for_database(database)
+    authorization_path = new_ledger_authorization_path(database)
+    identity = store.ledger_identity()
+    ledger_id = str(identity["ledger_id"])
+    if identity["ever_nonempty"] and not (
+        identity["journey_count"] or identity["jaunt_count"]
+    ):
+        raise PersistenceError(
+            "Wander refused an unexpectedly empty ledger that previously contained data"
+        )
+
+    if identity_path.is_file():
+        document = _read_json_object(identity_path)
+        if Path(str(document.get("database", ""))).resolve() != database:
+            raise PersistenceError("Wander ledger identity names a different database path")
+        if document.get("ledger_id") != ledger_id:
+            raise PersistenceError(
+                "Wander refused a replacement ledger whose identity does not match this installation"
+            )
+        authorization_path.unlink(missing_ok=True)
+        return LedgerIdentityReceipt(
+            database=str(database),
+            ledger_id=ledger_id,
+            registered_at=str(document.get("registered_at", "")),
+        )
+
+    authorized_new = new_ledger_is_authorized(database)
+
+    if database_existed and not authorized_new and not allow_unregistered_ledger:
+        with closing(_open_read_only(database)) as connection:
+            inventory = database_inventory(connection)
+        receipts = _matching_import_receipts(database, backups)
+        if not any(
+            _receipt_proves_lineage(receipt, ledger_id, inventory) for receipt in receipts
+        ):
+            raise PersistenceError(
+                "Wander refused an unregistered ledger because no verified import receipt "
+                "proves its lineage"
+            )
+    elif not database_existed and not authorized_new and not allow_unregistered_ledger:
+        raise PersistenceError(
+            "Wander refused to create a replacement ledger without explicit authorization"
+        )
+
+    receipt = LedgerIdentityReceipt(
+        database=str(database),
+        ledger_id=ledger_id,
+        registered_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    _write_json_atomic(asdict(receipt), identity_path)
+    authorization_path.unlink(missing_ok=True)
+    return receipt
 
 
 def _import_legacy_database(
@@ -352,6 +540,11 @@ def _import_legacy_database(
         raise PersistenceError(f"Legacy Wander database does not exist: {source}")
     if destination.exists():
         raise PersistenceError(f"Refusing to overwrite Wander database: {destination}")
+    if identity_path_for_database(destination).exists():
+        raise PersistenceError(
+            f"Refusing to overwrite Wander ledger identity: "
+            f"{identity_path_for_database(destination)}"
+        )
 
     locks = sorted((source, destination), key=lambda path: os.path.normcase(str(path)))
     with ExitStack() as stack:
@@ -378,7 +571,8 @@ def _import_legacy_database(
         receipt_path = backup.with_suffix(".json")
         try:
             _backup_database(backup, staged_destination)
-            WanderStore(staged_destination)
+            staged_store = WanderStore(staged_destination)
+            ledger_id = str(staged_store.ledger_identity()["ledger_id"])
             _finalize_staged_database(staged_destination)
             with closing(_open_read_only(staged_destination)) as migrated_connection:
                 _assert_integrity(migrated_connection, str(staged_destination))
@@ -398,17 +592,28 @@ def _import_legacy_database(
                 destination_schema=destination_schema,
                 backup_sha256=_sha256(backup),
                 inventory=source_inventory,
+                ledger_id=ledger_id,
                 migrated_at=datetime.now(UTC).isoformat(timespec="seconds"),
             )
             _write_receipt(receipt, receipt_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.replace(staged_destination, destination)
+                identity_receipt = LedgerIdentityReceipt(
+                    database=str(destination),
+                    ledger_id=ledger_id,
+                    registered_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                )
+                _write_json_atomic(
+                    asdict(identity_receipt),
+                    identity_path_for_database(destination),
+                )
             except BaseException:
-                try:
-                    receipt_path.unlink()
-                except FileNotFoundError:
-                    pass
+                if not destination.exists():
+                    try:
+                        receipt_path.unlink()
+                    except FileNotFoundError:
+                        pass
                 raise
         except BaseException:
             _remove_sqlite_files(staged_destination)

@@ -8,7 +8,11 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from wander.persistence import PersistenceError, import_legacy_database
+from wander.persistence import (
+    PersistenceError,
+    identity_path_for_database,
+    import_legacy_database,
+)
 from wander.store import SCHEMA_VERSION, WanderStore
 
 
@@ -37,6 +41,11 @@ class PersistenceBootstrapTests(unittest.TestCase):
 
             self.assertEqual(source_hash, sha256(source))
             self.assertTrue(destination.is_file())
+            identity_document = json.loads(
+                identity_path_for_database(destination).read_text(encoding="utf-8")
+            )
+            self.assertEqual(receipt.ledger_id, identity_document["ledger_id"])
+            self.assertEqual(str(destination.resolve()), identity_document["database"])
             self.assertTrue(Path(receipt.backup).is_file())
             self.assertEqual(SCHEMA_VERSION, receipt.destination_schema)
             self.assertEqual(1, receipt.inventory["journeys"]["count"])
@@ -84,7 +93,7 @@ class PersistenceBootstrapTests(unittest.TestCase):
             backups = root / "backups"
             with closing(sqlite3.connect(source)) as connection:
                 connection.execute("CREATE TABLE future_data (value TEXT NOT NULL)")
-                connection.execute("PRAGMA user_version = 5")
+                connection.execute("PRAGMA user_version = 6")
                 connection.commit()
 
             with self.assertRaisesRegex(PersistenceError, "newer than"):

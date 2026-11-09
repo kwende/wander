@@ -395,14 +395,14 @@ class WanderStoreTests(unittest.TestCase):
         future_path = Path(self.temporary_directory.name) / "future.db"
         with closing(sqlite3.connect(future_path)) as connection:
             connection.execute("CREATE TABLE future_data (value TEXT NOT NULL)")
-            connection.execute("PRAGMA user_version = 5")
+            connection.execute("PRAGMA user_version = 6")
             connection.commit()
 
         with self.assertRaisesRegex(ConflictError, "newer than"):
             WanderStore(future_path)
 
         with closing(sqlite3.connect(future_path)) as connection:
-            self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(6, connection.execute("PRAGMA user_version").fetchone()[0])
 
     def test_legacy_project_schema_is_migrated_without_losing_history(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "legacy.db"
@@ -527,7 +527,7 @@ class WanderStoreTests(unittest.TestCase):
                 ).fetchone()[0],
             )
             self.assertEqual([], connection.execute("PRAGMA foreign_key_check").fetchall())
-            self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
 
 
 if __name__ == "__main__":

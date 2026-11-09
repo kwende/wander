@@ -84,7 +84,9 @@ packaged executable. PowerShell orchestrates the paths but never opens SQLite:
 The source application must be stopped. The packaged application acquires the
 source and destination leases, verifies and snapshots the source, migrates a
 staged copy, compares semantic inventories, and atomically publishes the new
-ledger. It refuses to overwrite an existing destination.
+ledger. The imported database receives a stable ledger ID and the application
+writes `wander.identity.json` beside it. It refuses to overwrite an existing
+destination or identity.
 
 An immutable version can be staged without publishing any launch link:
 
@@ -95,10 +97,13 @@ An immutable version can be staged without publishing any launch link:
 ```
 
 A full install is data-gated. It requires the per-user ledger to exist first,
-unless `-AllowNewLedger` explicitly authorizes a new empty ledger. The installer
-verifies WebView2 and every manifest hash, copies into a versioned directory,
-then transactionally replaces the Desktop and Start Menu launch links. Pending
-pointer transactions are restored on the next installer or rollback run.
+unless `-AllowNewLedger` writes a one-use authorization for a new empty ledger.
+The application consumes that authorization only after creating the database
+and its identity receipt. It will not treat the flag as permission to replace a
+missing registered ledger. The installer verifies WebView2 and every manifest
+hash, copies into a versioned directory, then transactionally replaces the
+Desktop and Start Menu launch links. Pending pointer transactions are restored
+on the next installer or rollback run.
 
 ```powershell
 & .\scripts\install-desktop.ps1 `
@@ -117,6 +122,14 @@ Rollback never restores a database backup. Data restore is a separate emergency
 operation because it discards writes made after the selected snapshot. Until
 the ledger cutover and Codex registration batch is complete, use `-StageOnly`
 or temporary install/data roots rather than installing to the default paths.
+
+At startup Wander verifies that the database's ledger ID matches the adjacent
+identity receipt. Schema 5 also records `ever_nonempty` inside SQLite; Journey
+and Jaunt creation set it through same-transaction triggers. Startup refuses a
+missing or replacement database, and refuses a database that was previously
+non-empty but now contains neither Journeys nor Jaunts. A pre-schema-5 imported
+ledger can establish its first identity only when its recorded import inventory
+still proves the current database descends from that import.
 
 Each journey can expose ordered HTTP links beneath its description. The
 dashboard presents top-level work as a rolling horizon: **Now** for active or

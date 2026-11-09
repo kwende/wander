@@ -32,9 +32,13 @@ from wander.persistence import (
     SingleInstanceLock,
     backup_before_schema_migration,
     check_database_compatibility,
+    identity_path_for_database,
     import_legacy_database,
+    new_ledger_is_authorized,
+    preflight_ledger_identity,
+    validate_or_register_ledger_identity,
 )
-from wander.store import SCHEMA_VERSION, WanderStore
+from wander.store import SCHEMA_VERSION, WanderError, WanderStore
 from wander.web import create_server
 
 
@@ -62,7 +66,13 @@ class DesktopHost:
         share_base_url: str | None = None,
         mcp_port: int = 8766,
         backups_directory: Path | None = None,
+        allow_unregistered_ledger: bool = False,
     ) -> DesktopHost:
+        database_path = database_path.resolve()
+        backups_directory = (
+            backups_directory or backup_directory_for_database(database_path)
+        ).resolve()
+        database_existed = database_path.is_file()
         instance_lock = SingleInstanceLock(database_path)
         try:
             instance_lock.acquire()
@@ -71,13 +81,37 @@ class DesktopHost:
                 "Wander is already running with this ledger. Use the existing window."
             ) from error
         try:
+            if not database_existed and identity_path_for_database(database_path).exists():
+                raise PersistenceError(
+                    "Wander refused to replace its missing ledger while an identity receipt exists"
+                )
+            if (
+                not database_existed
+                and not allow_unregistered_ledger
+                and not new_ledger_is_authorized(database_path)
+            ):
+                raise PersistenceError(
+                    "Wander refused to create a replacement ledger without explicit authorization"
+                )
+            preflight_ledger_identity(
+                database_path,
+                backups_directory,
+                allow_unregistered_ledger=allow_unregistered_ledger,
+            )
             backup_before_schema_migration(
                 database_path,
-                backups_directory or backup_directory_for_database(database_path),
+                backups_directory,
                 SCHEMA_VERSION,
             )
             store = WanderStore(database_path)
-        except (OSError, sqlite3.Error, PersistenceError) as error:
+            validate_or_register_ledger_identity(
+                store,
+                database_path,
+                backups_directory,
+                database_existed=database_existed,
+                allow_unregistered_ledger=allow_unregistered_ledger,
+            )
+        except (OSError, sqlite3.Error, PersistenceError, WanderError) as error:
             instance_lock.release()
             raise DesktopStartupError(
                 f"Wander could not open its database at {database_path}: {error}"
@@ -233,6 +267,7 @@ def run_desktop(
     mcp_port: int = 8766,
     backups_directory: Path | None = None,
     webview_module: ModuleType | None = None,
+    allow_unregistered_ledger: bool = False,
 ) -> None:
     desktop = DesktopHost.create(
         host,
@@ -241,6 +276,7 @@ def run_desktop(
         share_base_url,
         mcp_port,
         backups_directory,
+        allow_unregistered_ledger,
     )
     try:
         desktop.start()
@@ -288,6 +324,7 @@ def run_self_test() -> dict[str, object]:
             root / "wander.db",
             mcp_port=0,
             backups_directory=root / "backups",
+            allow_unregistered_ledger=True,
         )
         dashboard_port = host.server.server_port
         try:

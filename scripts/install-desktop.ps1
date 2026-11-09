@@ -31,6 +31,8 @@ $bundle = Read-WanderBundleManifest $BundlePath -AllowDevelopmentBuild:$AllowDev
 $webViewVersion = if ($SkipWebView2Check) { 'check-skipped' } else { Get-WanderWebView2Version }
 $versionPath = Join-Path $InstallRoot "versions\$($bundle.Manifest.version_id)"
 $database = Join-Path $DataRoot 'data\wander.db'
+$ledgerIdentity = Join-Path $DataRoot 'data\wander.identity.json'
+$newLedgerAuthorization = Join-Path $DataRoot 'data\wander.new-ledger.json'
 
 if ($PlanOnly) {
     [pscustomobject]@{
@@ -47,6 +49,9 @@ if ($PlanOnly) {
 
 if (-not $StageOnly -and -not $AllowNewLedger -and -not (Test-Path -LiteralPath $database -PathType Leaf)) {
     throw "No migrated Wander ledger exists at $database. Stage the bundle first or pass -AllowNewLedger explicitly."
+}
+if (-not $StageOnly -and -not (Test-Path -LiteralPath $database -PathType Leaf) -and (Test-Path -LiteralPath $ledgerIdentity -PathType Leaf)) {
+    throw "The Wander ledger is missing but its identity remains at $ledgerIdentity. Restore the ledger instead of creating a replacement."
 }
 
 $versionsRoot = Join-Path $InstallRoot 'versions'
@@ -81,6 +86,13 @@ if ($StageOnly) {
     return
 }
 
+if ($AllowNewLedger -and -not (Test-Path -LiteralPath $database -PathType Leaf)) {
+    Write-WanderJsonAtomic $newLedgerAuthorization ([ordered]@{
+        database = [IO.Path]::GetFullPath($database)
+        authorized_at = [DateTimeOffset]::UtcNow.ToString('o')
+    })
+}
+
 $statePath = Join-Path $InstallRoot 'install.json'
 $previousVersion = $null
 if (Test-Path -LiteralPath $statePath -PathType Leaf) {
@@ -108,5 +120,6 @@ $state = Set-WanderLaunchPointers `
     desktop_shortcut = $state.desktop_shortcut
     start_menu_shortcut = $state.start_menu_shortcut
     database = $database
+    new_ledger_authorization = if (Test-Path -LiteralPath $newLedgerAuthorization -PathType Leaf) { $newLedgerAuthorization } else { $null }
     webview2 = $webViewVersion
 } | ConvertTo-Json -Depth 3

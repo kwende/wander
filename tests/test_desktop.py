@@ -20,6 +20,11 @@ from mcp.client.streamable_http import streamable_http_client
 
 from wander import mcp_server
 from wander.desktop import DesktopHost, DesktopStartupError, main, run_desktop, run_self_test
+from wander.persistence import (
+    database_inventory,
+    identity_path_for_database,
+    new_ledger_authorization_path,
+)
 from wander.store import WanderStore
 
 
@@ -47,9 +52,13 @@ async def create_journey_through_mcp(url: str, slug: str) -> None:
 
 
 class DesktopHostTests(unittest.TestCase):
+    def create_host(self, *args: object, **kwargs: object) -> DesktopHost:
+        kwargs.setdefault("allow_unregistered_ledger", True)
+        return DesktopHost.create(*args, **kwargs)
+
     def test_server_becomes_healthy_and_stops_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            host = DesktopHost.create(
+            host = self.create_host(
                 "127.0.0.1",
                 0,
                 Path(temporary_directory) / "wander.db",
@@ -80,7 +89,7 @@ class DesktopHostTests(unittest.TestCase):
 
     def test_ui_and_mcp_share_the_application_store(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            host = DesktopHost.create(
+            host = self.create_host(
                 "127.0.0.1",
                 0,
                 Path(temporary_directory) / "wander.db",
@@ -107,7 +116,7 @@ class DesktopHostTests(unittest.TestCase):
             occupied.listen()
             port = occupied.getsockname()[1]
             with self.assertRaisesRegex(DesktopStartupError, "already own that address"):
-                DesktopHost.create(
+                self.create_host(
                     "127.0.0.1",
                     port,
                     Path(temporary_directory) / "wander.db",
@@ -119,7 +128,7 @@ class DesktopHostTests(unittest.TestCase):
             occupied.bind(("127.0.0.1", 0))
             occupied.listen()
             port = occupied.getsockname()[1]
-            host = DesktopHost.create(
+            host = self.create_host(
                 "127.0.0.1",
                 0,
                 Path(temporary_directory) / "wander.db",
@@ -157,19 +166,159 @@ class DesktopHostTests(unittest.TestCase):
                 DesktopStartupError,
                 rf"could not open its database at {re.escape(str(database_path))}",
             ):
-                DesktopHost.create("127.0.0.1", 0, database_path)
+                self.create_host("127.0.0.1", 0, database_path)
+
+    def test_missing_ledger_requires_authorization_without_creating_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+
+            with self.assertRaisesRegex(DesktopStartupError, "explicit authorization"):
+                DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+
+            self.assertFalse(database_path.exists())
+            self.assertFalse(identity_path_for_database(database_path).exists())
+
+    def test_one_time_new_ledger_authorization_is_consumed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+            authorization = new_ledger_authorization_path(database_path)
+            authorization.write_text(
+                json.dumps({"database": str(database_path.resolve())}),
+                encoding="utf-8",
+            )
+
+            host = DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            host.stop()
+
+            self.assertTrue(database_path.is_file())
+            self.assertTrue(identity_path_for_database(database_path).is_file())
+            self.assertFalse(authorization.exists())
+
+    def test_wrong_new_ledger_authorization_does_not_create_a_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+            authorization = new_ledger_authorization_path(database_path)
+            authorization.write_text(
+                json.dumps({"database": str(database_path.with_name("other.db"))}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(DesktopStartupError, "different database path"):
+                DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+
+            self.assertFalse(database_path.exists())
+
+    def test_replacement_ledger_is_rejected_by_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+            original = self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
+            original.stop()
+            original_id = json.loads(
+                identity_path_for_database(database_path).read_text(encoding="utf-8")
+            )["ledger_id"]
+            database_path.unlink()
+            replacement_id = WanderStore(database_path).ledger_identity()["ledger_id"]
+            self.assertNotEqual(original_id, replacement_id)
+
+            with self.assertRaisesRegex(DesktopStartupError, "replacement ledger"):
+                DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+
+    def test_previously_nonempty_ledger_cannot_be_opened_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "wander.db"
+            host = self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
+            host.store.create_journey("durable", "Durable", "Must not disappear")
+            host.stop()
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute("DELETE FROM journeys")
+                connection.commit()
+
+            with self.assertRaisesRegex(DesktopStartupError, "unexpectedly empty"):
+                DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+
+    def test_shrunk_imported_ledger_is_rejected_before_schema_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database_path = root / "data" / "wander.db"
+            database_path.parent.mkdir()
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute("PRAGMA user_version = 4")
+                connection.commit()
+            migration = root / "migration"
+            migration.mkdir()
+            append_only_tables = (
+                "journeys",
+                "work_items",
+                "thread_references",
+                "checkpoints",
+                "events",
+                "jaunts",
+                "jaunt_events",
+            )
+            inventory = {
+                table: {"count": 1 if table == "journeys" else 0, "sha256": "ignored"}
+                for table in append_only_tables
+            }
+            (migration / "first-import.json").write_text(
+                json.dumps(
+                    {"destination": str(database_path.resolve()), "inventory": inventory}
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(DesktopStartupError, "no verified import receipt"):
+                DesktopHost.create(
+                    "127.0.0.1",
+                    0,
+                    database_path,
+                    mcp_port=0,
+                    backups_directory=root / "backups",
+                )
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertFalse((root / "backups").exists())
+
+    def test_verified_import_receipt_registers_a_pre_identity_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database_path = root / "data" / "wander.db"
+            WanderStore(database_path).create_journey(
+                "imported", "Imported", "Preserve the imported lineage"
+            )
+            with closing(sqlite3.connect(database_path)) as connection:
+                inventory = database_inventory(connection)
+            migration = root / "migration"
+            migration.mkdir()
+            (migration / "first-import.json").write_text(
+                json.dumps(
+                    {"destination": str(database_path.resolve()), "inventory": inventory}
+                ),
+                encoding="utf-8",
+            )
+
+            host = DesktopHost.create(
+                "127.0.0.1",
+                0,
+                database_path,
+                mcp_port=0,
+                backups_directory=root / "backups",
+            )
+            host.stop()
+
+            self.assertTrue(identity_path_for_database(database_path).is_file())
 
     def test_second_host_is_rejected_before_it_can_open_the_same_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "wander.db"
-            first = DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            first = self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
             try:
                 with self.assertRaisesRegex(DesktopStartupError, "already running"):
-                    DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+                    self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
             finally:
                 first.stop()
 
-            replacement = DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+            replacement = self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
             replacement.stop()
 
     def test_schema_backup_precedes_store_initialization(self) -> None:
@@ -183,7 +332,7 @@ class DesktopHostTests(unittest.TestCase):
                 connection.execute("PRAGMA user_version = 3")
                 connection.commit()
 
-            host = DesktopHost.create(
+            host = self.create_host(
                 "127.0.0.1",
                 0,
                 database_path,
@@ -192,7 +341,7 @@ class DesktopHostTests(unittest.TestCase):
             )
             host.stop()
 
-            created_backups = list(backups.glob("pre-schema-3-to-4-*.db"))
+            created_backups = list(backups.glob("pre-schema-3-to-5-*.db"))
             self.assertEqual(1, len(created_backups))
             with closing(sqlite3.connect(created_backups[0])) as connection:
                 self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
@@ -201,7 +350,7 @@ class DesktopHostTests(unittest.TestCase):
                     connection.execute("SELECT value FROM sentinel").fetchone()[0],
                 )
             with closing(sqlite3.connect(database_path)) as connection:
-                self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
+                self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
 
     def test_newer_schema_is_rejected_without_mutation_and_releases_the_lease(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -209,15 +358,15 @@ class DesktopHostTests(unittest.TestCase):
             with closing(sqlite3.connect(database_path)) as connection:
                 connection.execute("CREATE TABLE future_data (value TEXT NOT NULL)")
                 connection.execute("INSERT INTO future_data VALUES ('preserve me')")
-                connection.execute("PRAGMA user_version = 5")
+                connection.execute("PRAGMA user_version = 6")
                 connection.commit()
 
             for _ in range(2):
                 with self.assertRaisesRegex(DesktopStartupError, "newer than"):
-                    DesktopHost.create("127.0.0.1", 0, database_path, mcp_port=0)
+                    self.create_host("127.0.0.1", 0, database_path, mcp_port=0)
 
             with closing(sqlite3.connect(database_path)) as connection:
-                self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
+                self.assertEqual(6, connection.execute("PRAGMA user_version").fetchone()[0])
                 self.assertEqual(
                     "preserve me",
                     connection.execute("SELECT value FROM future_data").fetchone()[0],
@@ -240,6 +389,7 @@ class DesktopHostTests(unittest.TestCase):
                 Path(temporary_directory) / "wander.db",
                 mcp_port=0,
                 webview_module=fake_webview,
+                allow_unregistered_ledger=True,
             )
 
         self.assertEqual("Wander", calls[0][1][0])
@@ -259,7 +409,7 @@ class DesktopHostTests(unittest.TestCase):
             database = root / "future.db"
             output = root / "diagnostic.json"
             with closing(sqlite3.connect(database)) as connection:
-                connection.execute("PRAGMA user_version = 5")
+                connection.execute("PRAGMA user_version = 6")
 
             exit_code = main(
                 [
@@ -274,7 +424,7 @@ class DesktopHostTests(unittest.TestCase):
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual("ok", report["status"])
             self.assertFalse(report["compatible"])
-            self.assertEqual(5, report["schema_version"])
+            self.assertEqual(6, report["schema_version"])
 
     def test_legacy_import_mode_uses_application_migration_and_writes_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
