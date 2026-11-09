@@ -13,7 +13,7 @@ COMMENT_FRAGMENT_PATTERN = re.compile(r"^issuecomment-(?P<comment_id>[1-9][0-9]*
 
 
 class GitHubProjectionError(ValueError):
-    """Raised when a project cannot produce one unambiguous GitHub projection."""
+    """Raised when a journey cannot produce one unambiguous GitHub projection."""
 
 
 def parse_github_issue_url(url: str) -> dict[str, Any] | None:
@@ -58,8 +58,11 @@ def parse_github_issue_comment_url(url: str) -> dict[str, Any] | None:
     }
 
 
-def projection_marker(project_slug: str) -> str:
-    return f"<!-- wander:projection project={project_slug} -->"
+def projection_marker(journey_slug: str) -> str:
+    # This is a stable protocol marker, not user-facing domain language. Keep the
+    # legacy key so an interrupted pre-migration registration is recovered rather
+    # than mistaken for a missing comment and duplicated.
+    return f"<!-- wander:projection project={journey_slug} -->"
 
 
 def _inline_markdown(value: str) -> str:
@@ -124,28 +127,28 @@ def _validate_workboard_url(workboard_url: str) -> str:
 
 
 def build_github_issue_projection(
-    project: dict[str, Any],
+    journey: dict[str, Any],
     workboard_url: str = "",
 ) -> dict[str, Any]:
     issue_targets = [
         parsed
-        for link in project.get("links", [])
+        for link in journey.get("links", [])
         if (parsed := parse_github_issue_url(link["url"])) is not None
     ]
     if len(issue_targets) != 1:
         raise GitHubProjectionError(
-            "project must contain exactly one GitHub issue link before it can be projected"
+            "journey must contain exactly one GitHub issue link before it can be projected"
         )
     issue = issue_targets[0]
 
     comment_targets = [
         parsed
-        for link in project.get("links", [])
+        for link in journey.get("links", [])
         if link["label"] == PROJECTION_LINK_LABEL
         and (parsed := parse_github_issue_comment_url(link["url"])) is not None
     ]
     if len(comment_targets) > 1:
-        raise GitHubProjectionError("project contains more than one Wander projection comment")
+        raise GitHubProjectionError("journey contains more than one Wander projection comment")
     comment = comment_targets[0] if comment_targets else None
     if comment and (
         comment["owner"].casefold() != issue["owner"].casefold()
@@ -156,25 +159,25 @@ def build_github_issue_projection(
             "Wander projection comment must belong to the configured GitHub issue"
         )
 
-    items = project.get("work_items", [])
+    items = journey.get("work_items", [])
     actionable_items = [item for item in items if item["status"] != "abandoned"]
     completed_items = [item for item in actionable_items if item["status"] == "complete"]
     safe_workboard_url = _validate_workboard_url(workboard_url)
-    marker = projection_marker(project["slug"])
+    marker = projection_marker(journey["slug"])
 
     body_lines = [
         marker,
         "",
-        f"## Wander progress: {_inline_markdown(project['title'])}",
+        f"## Wander progress: {_inline_markdown(journey['title'])}",
         "",
         "> This comment is generated from Wander, which is the source of truth. "
         "GitHub checkbox edits are display-only and never update Wander.",
         "",
-        f"**Project status:** {_inline_markdown(project['status'])}",
+        f"**Journey status:** {_inline_markdown(journey['status'])}",
     ]
-    if project.get("current_phase"):
+    if journey.get("current_phase"):
         body_lines.append(
-            f"**Current phase:** {_inline_markdown(project['current_phase'])}"
+            f"**Current phase:** {_inline_markdown(journey['current_phase'])}"
         )
     body_lines.extend(
         [
@@ -189,16 +192,15 @@ def build_github_issue_projection(
     body_lines.extend(
         [
             "",
-            f"_Last synchronized from Wander project version `{project['version']}`._",
+            f"_Last synchronized from Wander journey version `{journey['version']}`._",
             "",
             "<!-- wander:projection:end -->",
         ]
     )
 
     return {
-        "project": project["slug"],
-        "project_version": project["version"],
-        "writer_warning": project.get("writer_warning", ""),
+        "journey": journey["slug"],
+        "journey_version": journey["version"],
         "issue": issue,
         "comment": comment,
         "operation": "update" if comment else "create",

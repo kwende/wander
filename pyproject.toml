@@ -4,17 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wander-workboard"
-version = "0.6.0"
-description = "A durable, MCP-managed workboard for Codex projects"
+version = "0.8.0"
+description = "A durable, MCP-managed workboard for Codex journeys"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anyio==4.15.1",
+    "httpx2==2.16.0",
     "mcp==2.3.0",
+    "pywebview==6.2.1",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+packaging = [
+    "pyinstaller==6.22.3",
 ]
 
 [project.scripts]
 wander-mcp = "wander.mcp_server:main"
 wander-web = "wander.web:main"
+wander-desktop = "wander.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

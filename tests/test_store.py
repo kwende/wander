@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
-from wander.store import ConflictError, OwnershipError, ValidationError, WanderStore
+from wander.store import ConflictError, ValidationError, WanderStore
 
 
 class WanderStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "wander.db"
-        self.store = WanderStore(self.database_path, "test-thread")
-        self.project = self.store.create_project(
+        self.store = WanderStore(self.database_path)
+        self.journey = self.store.create_journey(
             "camera-reboot",
             "Camera reboot investigation",
             "Explain and mitigate camera frame starvation.",
@@ -21,13 +23,13 @@ class WanderStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    def project_state(self) -> dict:
-        return self.store.get_project("camera-reboot")
+    def journey_state(self) -> dict:
+        return self.store.get_journey("camera-reboot")
 
     def test_mutations_return_compact_chainable_deltas(self) -> None:
         added = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Collect evidence",
         )
         item_id = added["changed"]["work_item_ids"][0]
@@ -39,77 +41,77 @@ class WanderStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {"project", "version", "operation", "changed", "writer_warning"},
+            {"journey", "version", "operation", "changed"},
             set(started),
         )
-        self.assertEqual("camera-reboot", started["project"])
+        self.assertEqual("camera-reboot", started["journey"])
         self.assertEqual("work_item.active", started["operation"])
         self.assertEqual({"work_item_ids": [item_id]}, started["changed"])
         self.assertEqual(3, started["version"])
         self.assertNotIn("work_items", started)
         self.assertNotIn("recent_events", started)
 
-    def test_stale_writer_is_rejected(self) -> None:
-        version = self.project["version"]
+    def test_stale_version_is_rejected(self) -> None:
+        version = self.journey["version"]
         self.store.add_work_item("camera-reboot", version, "Collect evidence")
 
         with self.assertRaises(ConflictError):
             self.store.add_work_item("camera-reboot", version, "Overwrite newer state")
 
     def test_completion_requires_active_item_and_evidence(self) -> None:
-        project = self.store.add_work_item(
+        journey = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Prove recovery",
             "A controlled camera fault recovers.",
         )
-        item_id = project["changed"]["work_item_ids"][0]
+        item_id = journey["changed"]["work_item_ids"][0]
 
         with self.assertRaises(ValidationError):
             self.store.complete_work_item(
                 "camera-reboot",
                 item_id,
-                project["version"],
+                journey["version"],
                 "",
                 "Done",
             )
 
-        project = self.store.start_work_item(
+        journey = self.store.start_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Beginning controlled test",
         )
-        project = self.store.complete_work_item(
+        journey = self.store.complete_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Tracker logs show frames resumed after reset.",
             "Controlled recovery passed",
         )
 
-        state = self.project_state()
+        state = self.journey_state()
         self.assertEqual("complete", state["work_items"][0]["status"])
-        self.assertEqual(4, project["version"])
+        self.assertEqual(4, journey["version"])
 
     def test_parent_cannot_complete_before_child_items(self) -> None:
-        project = self.store.add_work_item(
+        journey = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Implement recovery",
         )
-        parent_id = project["changed"]["work_item_ids"][0]
-        project = self.store.add_work_item(
+        parent_id = journey["changed"]["work_item_ids"][0]
+        journey = self.store.add_work_item(
             "camera-reboot",
-            project["version"],
+            journey["version"],
             "Validate recovery",
             parent_id=parent_id,
         )
-        child_id = project["changed"]["work_item_ids"][0]
-        project = self.store.start_work_item(
+        child_id = journey["changed"]["work_item_ids"][0]
+        journey = self.store.start_work_item(
             "camera-reboot",
             parent_id,
-            project["version"],
+            journey["version"],
             "Implementing recovery",
         )
 
@@ -117,57 +119,57 @@ class WanderStoreTests(unittest.TestCase):
             self.store.complete_work_item(
                 "camera-reboot",
                 parent_id,
-                project["version"],
+                journey["version"],
                 "Parent evidence",
                 "Parent complete",
             )
 
-        project = self.store.start_work_item(
+        journey = self.store.start_work_item(
             "camera-reboot",
             child_id,
-            project["version"],
+            journey["version"],
             "Validating recovery",
         )
-        project = self.store.complete_work_item(
+        journey = self.store.complete_work_item(
             "camera-reboot",
             child_id,
-            project["version"],
+            journey["version"],
             "Child evidence",
             "Child complete",
         )
-        project = self.store.complete_work_item(
+        journey = self.store.complete_work_item(
             "camera-reboot",
             parent_id,
-            project["version"],
+            journey["version"],
             "Parent evidence",
             "Parent complete",
         )
 
         parent = next(
             item
-            for item in self.project_state()["work_items"]
+            for item in self.journey_state()["work_items"]
             if item["id"] == parent_id
         )
         self.assertEqual("complete", parent["status"])
 
     def test_completion_atomically_attaches_commit_links(self) -> None:
-        project = self.store.add_work_item(
+        journey = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Implement recovery",
         )
-        item_id = project["changed"]["work_item_ids"][0]
-        project = self.store.start_work_item(
+        item_id = journey["changed"]["work_item_ids"][0]
+        journey = self.store.start_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Implementing recovery",
         )
 
-        project = self.store.complete_work_item(
+        journey = self.store.complete_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Recovery tests pass.",
             "Recovery implemented",
             [
@@ -176,26 +178,26 @@ class WanderStoreTests(unittest.TestCase):
             ],
         )
 
-        item = self.project_state()["work_items"][0]
+        item = self.journey_state()["work_items"][0]
         self.assertEqual("complete", item["status"])
         self.assertEqual(["0123456789ab", "89abcdef0123"], [link["label"] for link in item["links"]])
         self.assertEqual(
             [link["id"] for link in item["links"]],
-            project["changed"]["work_item_link_ids"],
+            journey["changed"]["work_item_link_ids"],
         )
-        self.assertEqual(4, project["version"])
+        self.assertEqual(4, journey["version"])
 
     def test_invalid_commit_link_leaves_item_active(self) -> None:
-        project = self.store.add_work_item(
+        journey = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Implement recovery",
         )
-        item_id = project["changed"]["work_item_ids"][0]
-        project = self.store.start_work_item(
+        item_id = journey["changed"]["work_item_ids"][0]
+        journey = self.store.start_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Implementing recovery",
         )
 
@@ -203,61 +205,61 @@ class WanderStoreTests(unittest.TestCase):
             self.store.complete_work_item(
                 "camera-reboot",
                 item_id,
-                project["version"],
+                journey["version"],
                 "Recovery tests pass.",
                 "Recovery implemented",
                 ["https://example.test/not-a-github-commit"],
             )
 
-        unchanged = self.store.get_project("camera-reboot")
+        unchanged = self.store.get_journey("camera-reboot")
         self.assertEqual("active", unchanged["work_items"][0]["status"])
         self.assertEqual([], unchanged["work_items"][0]["links"])
-        self.assertEqual(project["version"], unchanged["version"])
+        self.assertEqual(journey["version"], unchanged["version"])
 
     def test_commit_link_can_be_attached_after_completion(self) -> None:
-        project = self.store.add_work_item(
+        journey = self.store.add_work_item(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Document recovery",
         )
-        item_id = project["changed"]["work_item_ids"][0]
+        item_id = journey["changed"]["work_item_ids"][0]
 
         with self.assertRaises(ValidationError):
             self.store.add_work_item_link(
                 "camera-reboot",
                 item_id,
-                project["version"],
+                journey["version"],
                 "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
             )
 
-        project = self.store.start_work_item(
+        journey = self.store.start_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Writing documentation",
         )
-        project = self.store.complete_work_item(
+        journey = self.store.complete_work_item(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "Documentation reviewed.",
             "Documentation complete",
         )
-        project = self.store.add_work_item_link(
+        journey = self.store.add_work_item_link(
             "camera-reboot",
             item_id,
-            project["version"],
+            journey["version"],
             "https://github.com/Ocuvera/Ocuvera/commit/0123456789abcdef0123456789abcdef01234567",
         )
 
-        state = self.project_state()
+        state = self.journey_state()
         self.assertEqual("0123456789ab", state["work_items"][0]["links"][0]["label"])
         self.assertEqual("work_item_link.added", state["recent_events"][0]["operation"])
 
     def test_checkpoint_is_returned_as_resume_context(self) -> None:
-        project = self.store.record_checkpoint(
+        journey = self.store.record_checkpoint(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Evidence collection is ready.",
             "Controlled reproduction",
             "The camera accessor owns recovery.",
@@ -268,10 +270,10 @@ class WanderStoreTests(unittest.TestCase):
         )
         context = self.store.get_resume_context("camera-reboot")
 
-        self.assertEqual(project["version"], context["project"]["version"])
+        self.assertEqual(journey["version"], context["journey"]["version"])
         self.assertEqual(
             [context["latest_checkpoint"]["id"]],
-            project["changed"]["checkpoint_ids"],
+            journey["changed"]["checkpoint_ids"],
         )
         self.assertEqual(
             "Run the depth-only perturbation.",
@@ -282,7 +284,7 @@ class WanderStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.attach_thread(
                 "camera-reboot",
-                self.project["version"],
+                self.journey["version"],
                 "https://example.test/thread",
                 "Wrong link",
                 "primary",
@@ -291,157 +293,241 @@ class WanderStoreTests(unittest.TestCase):
     def test_thread_mutation_returns_stable_reference_id(self) -> None:
         result = self.store.attach_thread(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
             "Investigation",
             "primary",
         )
-        state = self.project_state()
+        state = self.journey_state()
 
         self.assertEqual(
             [state["threads"][0]["id"]],
             result["changed"]["thread_reference_ids"],
         )
 
-    def test_unidentified_server_can_bind_once_and_create_project(self) -> None:
-        unidentified = WanderStore(
-            Path(self.temporary_directory.name) / "unidentified.db"
-        )
-
-        identity = unidentified.identify_writer_thread(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
-        )
-        result = unidentified.create_project(
-            "vc-runtime-cleanup",
-            "VC Runtime Cleanup",
-            "Align the native toolchain and packaged runtime.",
-        )
-
-        state = unidentified.get_project(result["project"])
-        self.assertEqual("identified", identity["status"])
-        self.assertEqual(
-            "01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            state["owner_thread_id"],
-        )
-        self.assertEqual(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67",
-            state["recent_events"][0]["source_thread"],
-        )
-
-    def test_mcp_session_cannot_switch_thread_identity(self) -> None:
-        unidentified = WanderStore(
-            Path(self.temporary_directory.name) / "identity-switch.db"
-        )
-        unidentified.identify_writer_thread(
-            "codex://threads/01a0abd2-f583-78a0-b1f5-c14899ee9c67"
-        )
-
-        with self.assertRaises(OwnershipError):
-            unidentified.identify_writer_thread(
-                "codex://threads/01a18d56-4e60-7050-a88d-c64cc83d5bae"
-            )
-
-    def test_project_links_are_versioned_and_ordered(self) -> None:
-        project = self.store.add_project_link(
+    def test_journey_links_are_versioned_and_ordered(self) -> None:
+        journey = self.store.add_journey_link(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Pull request #1127",
             "https://github.com/Ocuvera/Ocuvera/pull/1127",
             sequence=20,
         )
-        project = self.store.add_project_link(
+        journey = self.store.add_journey_link(
             "camera-reboot",
-            project["version"],
+            journey["version"],
             "Issue #1099",
             "https://github.com/Ocuvera/Ocuvera/issues/1099",
             sequence=10,
         )
 
-        state = self.project_state()
+        state = self.journey_state()
         self.assertEqual(
             ["Issue #1099", "Pull request #1127"],
             [link["label"] for link in state["links"]],
         )
-        self.assertEqual("project_link.added", state["recent_events"][0]["operation"])
-        self.assertEqual(3, project["version"])
+        self.assertEqual("journey_link.added", state["recent_events"][0]["operation"])
+        self.assertEqual(3, journey["version"])
 
-    def test_project_link_rejects_unsafe_url(self) -> None:
+    def test_journey_link_rejects_unsafe_url(self) -> None:
         with self.assertRaises(ValidationError):
-            self.store.add_project_link(
+            self.store.add_journey_link(
                 "camera-reboot",
-                self.project["version"],
+                self.journey["version"],
                 "Unsafe",
                 "javascript:alert(1)",
             )
 
-    def test_project_link_can_be_removed_with_history(self) -> None:
-        project = self.store.add_project_link(
+    def test_journey_link_can_be_removed_with_history(self) -> None:
+        journey = self.store.add_journey_link(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "Issue #1099",
             "https://github.com/Ocuvera/Ocuvera/issues/1099",
         )
-        link_id = project["changed"]["project_link_ids"][0]
+        link_id = journey["changed"]["journey_link_ids"][0]
 
-        project = self.store.remove_project_link(
+        journey = self.store.remove_journey_link(
             "camera-reboot",
             link_id,
-            project["version"],
+            journey["version"],
             "Issue was superseded",
         )
 
-        state = self.project_state()
+        state = self.journey_state()
         self.assertEqual([], state["links"])
-        self.assertEqual("project_link.removed", state["recent_events"][0]["operation"])
+        self.assertEqual("journey_link.removed", state["recent_events"][0]["operation"])
         self.assertIn("Issue was superseded", state["recent_events"][0]["summary"])
 
-    def test_completed_project_cannot_be_reactivated(self) -> None:
-        project = self.store.set_project_status(
+    def test_completed_journey_cannot_be_reactivated(self) -> None:
+        journey = self.store.set_journey_status(
             "camera-reboot",
-            self.project["version"],
+            self.journey["version"],
             "completed",
             "Investigation complete",
             "The release passed its production observation window.",
         )
 
         with self.assertRaises(ValidationError):
-            self.store.set_project_status(
+            self.store.set_journey_status(
                 "camera-reboot",
-                project["version"],
+                journey["version"],
                 "active",
                 "Reopen it",
             )
 
-    def test_non_owner_can_read_and_write_with_warning(self) -> None:
-        other_thread = WanderStore(self.database_path, "other-thread")
+    def test_second_store_uses_versions_instead_of_caller_identity(self) -> None:
+        second_store = WanderStore(self.database_path)
 
-        project = other_thread.add_work_item(
+        journey = second_store.add_work_item(
             "camera-reboot",
-            self.project["version"],
-            "Potentially conflicting work",
+            self.journey["version"],
+            "Versioned work",
         )
 
-        self.assertIn("codex://threads/test-thread", project["writer_warning"])
-        self.assertIn("write succeeded", project["writer_warning"])
-        self.assertEqual("test-thread", self.project_state()["owner_thread_id"])
-
-    def test_owner_can_release_and_another_thread_can_claim(self) -> None:
-        project = self.store.release_project(
-            "camera-reboot",
-            self.project["version"],
-            "Handing work to another conversation",
-        )
-        other_thread = WanderStore(self.database_path, "other-thread")
-        project = other_thread.claim_project("camera-reboot", project["version"])
-        project = other_thread.add_work_item(
-            "camera-reboot",
-            project["version"],
-            "Continue from new thread",
-        )
-
-        state = self.project_state()
-        self.assertEqual("other-thread", state["owner_thread_id"])
+        self.assertNotIn("writer_warning", journey)
+        state = self.journey_state()
+        self.assertNotIn("owner_thread_id", state)
         self.assertEqual(1, len(state["work_items"]))
+        self.assertEqual("", state["recent_events"][0]["source_thread"])
+
+    def test_store_refuses_to_downgrade_a_newer_schema(self) -> None:
+        future_path = Path(self.temporary_directory.name) / "future.db"
+        with closing(sqlite3.connect(future_path)) as connection:
+            connection.execute("CREATE TABLE future_data (value TEXT NOT NULL)")
+            connection.execute("PRAGMA user_version = 5")
+            connection.commit()
+
+        with self.assertRaisesRegex(ConflictError, "newer than"):
+            WanderStore(future_path)
+
+        with closing(sqlite3.connect(future_path)) as connection:
+            self.assertEqual(5, connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def test_legacy_project_schema_is_migrated_without_losing_history(self) -> None:
+        legacy_path = Path(self.temporary_directory.name) / "legacy.db"
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            connection.executescript(
+                """
+                PRAGMA foreign_keys = ON;
+                CREATE TABLE projects (
+                    id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+                    objective TEXT NOT NULL, status TEXT NOT NULL, current_summary TEXT NOT NULL,
+                    current_phase TEXT NOT NULL, owner_thread_id TEXT, version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE work_items (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    parent_id TEXT REFERENCES work_items(id), sequence INTEGER NOT NULL,
+                    title TEXT NOT NULL, status TEXT NOT NULL, completion_criteria TEXT NOT NULL,
+                    completion_evidence TEXT NOT NULL, notes TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE project_links (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    label TEXT NOT NULL, url TEXT NOT NULL, sequence INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(project_id, url)
+                );
+                CREATE TABLE work_item_links (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    work_item_id TEXT NOT NULL REFERENCES work_items(id), label TEXT NOT NULL,
+                    url TEXT NOT NULL, sequence INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(work_item_id, url)
+                );
+                CREATE TABLE thread_references (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    deep_link TEXT NOT NULL, title TEXT NOT NULL, role TEXT NOT NULL,
+                    last_activity TEXT NOT NULL, UNIQUE(project_id, deep_link)
+                );
+                CREATE TABLE checkpoints (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    current_model TEXT NOT NULL, last_decision TEXT NOT NULL,
+                    invariants TEXT NOT NULL, open_questions TEXT NOT NULL,
+                    resume_here TEXT NOT NULL, source_thread TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL REFERENCES projects(id), operation TEXT NOT NULL,
+                    before_version INTEGER NOT NULL, after_version INTEGER NOT NULL,
+                    summary TEXT NOT NULL, evidence TEXT NOT NULL,
+                    source_thread TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+
+                INSERT INTO projects VALUES (
+                    'journey-1', 'legacy-work', 'Legacy work', 'Preserve this ledger.',
+                    'active', 'Still active', 'Validation', 'legacy-thread', 4,
+                    '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00'
+                );
+                INSERT INTO work_items VALUES (
+                    'item-1', 'journey-1', NULL, 10, 'Preserve the item', 'active',
+                    'It survives.', '', 'Historical notes',
+                    '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00'
+                );
+                INSERT INTO project_links VALUES (
+                    'link-1', 'journey-1', 'Issue', 'https://github.com/kwende/wander/issues/1',
+                    10, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                );
+                INSERT INTO thread_references VALUES (
+                    'thread-1', 'journey-1', 'codex://threads/legacy-thread',
+                    'Legacy conversation', 'primary', '2026-01-02T00:00:00+00:00'
+                );
+                INSERT INTO checkpoints VALUES (
+                    'checkpoint-1', 'journey-1', 'Current model', 'Last decision',
+                    'Invariant', 'Question', 'Resume here', 'codex://threads/legacy-thread',
+                    '2026-01-02T00:00:00+00:00'
+                );
+                INSERT INTO events (
+                    project_id, operation, before_version, after_version,
+                    summary, evidence, source_thread, created_at
+                ) VALUES (
+                    'journey-1', 'project.created', 0, 1, 'Created project: Legacy work',
+                    '', 'codex://threads/legacy-thread', '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+
+        migrated = WanderStore(legacy_path)
+        state = migrated.get_journey("legacy-work")
+
+        self.assertEqual("Legacy work", state["title"])
+        self.assertEqual("Preserve the item", state["work_items"][0]["title"])
+        self.assertEqual("Issue", state["links"][0]["label"])
+        self.assertEqual("Legacy conversation", state["threads"][0]["title"])
+        self.assertEqual("Resume here", state["latest_checkpoint"]["resume_here"])
+        self.assertEqual("project.created", state["recent_events"][0]["operation"])
+
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            work_item_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(work_items)")
+            }
+            self.assertIn("journeys", tables)
+            self.assertIn("journey_links", tables)
+            self.assertNotIn("projects", tables)
+            self.assertNotIn("project_links", tables)
+            self.assertIn("journey_id", work_item_columns)
+            self.assertNotIn("project_id", work_item_columns)
+            self.assertEqual(
+                "legacy-thread",
+                connection.execute(
+                    "SELECT owner_thread_id FROM journeys WHERE id = 'journey-1'"
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                "codex://threads/legacy-thread",
+                connection.execute(
+                    "SELECT source_thread FROM events WHERE journey_id = 'journey-1'"
+                ).fetchone()[0],
+            )
+            self.assertEqual([], connection.execute("PRAGMA foreign_key_check").fetchall())
+            self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
 
 
 if __name__ == "__main__":
