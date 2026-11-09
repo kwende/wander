@@ -141,6 +141,25 @@ semantic inventory. The newest 168 changed generations are retained by default;
 `--snapshot-interval-seconds` and `--snapshot-retention` provide explicit
 runtime overrides.
 
+Restore is an explicit stopped-application operation. It accepts either a
+manifested snapshot or the verified first-import backup, takes a pre-restore
+safety backup of the current ledger, stages and migrates the selected source,
+and publishes it only after identity, schema, integrity, and semantic inventory
+checks succeed:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Wander\versions\<version>\Wander.exe" `
+    --restore-ledger "$env:LOCALAPPDATA\Wander\backups\snapshots\<snapshot>.db" `
+    --database "$env:LOCALAPPDATA\Wander\data\wander.db" `
+    --backups-directory "$env:LOCALAPPDATA\Wander\backups" `
+    --diagnostic-output .\artifacts\desktop-restore.json
+```
+
+The restore command holds the same exclusive ledger lease as the desktop app.
+It leaves `backups\restores\restore-pending.json` only when publication reached
+the point where operator recovery is required; rerunning the same restore can
+finish that interrupted operation.
+
 Each journey can expose ordered HTTP links beneath its description. The
 dashboard presents top-level work as a rolling horizon: **Now** for active or
 blocked work, **Next** for provisional known steps, and **Trail** for completed

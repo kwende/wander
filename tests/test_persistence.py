@@ -9,14 +9,16 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from wander import persistence as persistence_module
 from wander.persistence import (
     PersistenceError,
     create_verified_snapshot,
     identity_path_for_database,
     import_legacy_database,
+    restore_ledger,
     verify_snapshot,
 )
-from wander.store import SCHEMA_VERSION, WanderStore
+from wander.store import NotFoundError, SCHEMA_VERSION, WanderStore
 
 
 def sha256(path: Path) -> str:
@@ -24,6 +26,127 @@ def sha256(path: Path) -> str:
 
 
 class PersistenceBootstrapTests(unittest.TestCase):
+    def test_restore_round_trip_preserves_a_safety_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "data" / "wander.db"
+            backups = root / "backups"
+            store = WanderStore(database)
+            original = store.create_journey(
+                "restore-me", "Restore me", "Return to the snapshotted version"
+            )
+            snapshot = create_verified_snapshot(database, backups / "snapshots")
+            self.assertIsNotNone(snapshot)
+            store.add_work_item("restore-me", original["version"], "Later mutation")
+
+            receipt = restore_ledger(snapshot, database, backups, SCHEMA_VERSION)
+
+            restored = WanderStore(database).get_journey("restore-me")
+            self.assertEqual(original["version"], restored["version"])
+            self.assertEqual([], restored["work_items"])
+            self.assertEqual("snapshot", receipt.source_kind)
+            self.assertTrue(Path(receipt.safety_backup).is_file())
+            self.assertTrue(Path(receipt.safety_backup).with_suffix(".json").is_file())
+            self.assertEqual(
+                receipt.restored_ledger_id,
+                json.loads(
+                    identity_path_for_database(database).read_text(encoding="utf-8")
+                )["ledger_id"],
+            )
+            self.assertFalse((backups / "restores" / "restore-pending.json").exists())
+
+    def test_restore_refuses_a_snapshot_from_another_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            destination = root / "destination.db"
+            other = root / "other.db"
+            destination_store = WanderStore(destination)
+            destination_store.create_journey("keep", "Keep", "Keep this ledger")
+            other_store = WanderStore(other)
+            other_store.create_journey("other", "Other", "Different ledger")
+            snapshot = create_verified_snapshot(other, root / "snapshots")
+
+            with self.assertRaisesRegex(PersistenceError, "different Wander ledger"):
+                restore_ledger(snapshot, destination, root / "backups", SCHEMA_VERSION)
+
+            self.assertEqual("Keep", WanderStore(destination).get_journey("keep")["title"])
+            self.assertFalse((root / "backups").exists())
+
+    def test_interrupted_restore_can_finish_from_pending_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "data" / "wander.db"
+            backups = root / "backups"
+            store = WanderStore(database)
+            journey = store.create_journey(
+                "interrupted", "Interrupted", "Recover an interrupted restore"
+            )
+            snapshot = create_verified_snapshot(database, backups / "snapshots")
+            self.assertIsNotNone(snapshot)
+            store.add_work_item("interrupted", journey["version"], "Later mutation")
+            identity_path = identity_path_for_database(database)
+            original_write = persistence_module._write_json_atomic
+
+            def fail_identity_write(payload: object, destination: Path) -> None:
+                if destination == identity_path:
+                    raise OSError("identity publish interrupted")
+                original_write(payload, destination)
+
+            with (
+                patch(
+                    "wander.persistence._write_json_atomic",
+                    side_effect=fail_identity_write,
+                ),
+                self.assertRaisesRegex(OSError, "identity publish interrupted"),
+            ):
+                restore_ledger(snapshot, database, backups, SCHEMA_VERSION)
+
+            pending = backups / "restores" / "restore-pending.json"
+            self.assertTrue(pending.is_file())
+            self.assertEqual(
+                [], WanderStore(database).get_journey("interrupted")["work_items"]
+            )
+
+            receipt = restore_ledger(snapshot, database, backups, SCHEMA_VERSION)
+
+            self.assertFalse(pending.exists())
+            self.assertEqual(receipt.restored_ledger_id, store.ledger_identity()["ledger_id"])
+
+    def test_restore_accepts_verified_pre_identity_import_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            legacy = root / "legacy.db"
+            destination = root / "installed" / "data" / "wander.db"
+            backups = root / "installed" / "backups"
+            legacy_store = WanderStore(legacy)
+            legacy_store.create_journey(
+                "legacy", "Legacy", "Restore the November-style import backup"
+            )
+            with closing(sqlite3.connect(legacy)) as connection:
+                connection.execute("DROP TRIGGER mark_ledger_nonempty_on_journey")
+                connection.execute("DROP TRIGGER mark_ledger_nonempty_on_jaunt")
+                connection.execute("DROP TABLE ledger_metadata")
+                connection.execute("PRAGMA user_version = 4")
+                connection.commit()
+            imported = import_legacy_database(legacy, destination, backups)
+            WanderStore(destination).create_journey(
+                "later", "Later", "This should disappear after restore"
+            )
+
+            restored = restore_ledger(
+                imported.backup,
+                destination,
+                backups,
+                SCHEMA_VERSION,
+            )
+
+            restored_store = WanderStore(destination)
+            self.assertEqual("Legacy", restored_store.get_journey("legacy")["title"])
+            with self.assertRaisesRegex(NotFoundError, "not found"):
+                restored_store.get_journey("later")
+            self.assertEqual("first-import-backup", restored.source_kind)
+            self.assertNotEqual(imported.ledger_id, restored.restored_ledger_id)
+
     def test_verified_snapshot_is_skipped_until_semantic_state_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

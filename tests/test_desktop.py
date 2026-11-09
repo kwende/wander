@@ -22,6 +22,7 @@ from mcp.client.streamable_http import streamable_http_client
 from wander import mcp_server
 from wander.desktop import DesktopHost, DesktopStartupError, main, run_desktop, run_self_test
 from wander.persistence import (
+    create_verified_snapshot,
     database_inventory,
     identity_path_for_database,
     new_ledger_authorization_path,
@@ -519,6 +520,40 @@ class DesktopHostTests(unittest.TestCase):
             self.assertEqual("legacy-import", report["operation"])
             self.assertEqual(str(source.resolve()), report["source"])
             self.assertEqual(str(destination.resolve()), report["destination"])
+
+    def test_restore_mode_uses_verified_snapshot_and_writes_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "data" / "wander.db"
+            backups = root / "backups"
+            output = root / "restore.json"
+            store = WanderStore(database)
+            journey = store.create_journey(
+                "restore-cli", "Restore CLI", "Exercise the packaged restore path"
+            )
+            snapshot = create_verified_snapshot(database, backups / "snapshots")
+            self.assertIsNotNone(snapshot)
+            store.add_work_item("restore-cli", journey["version"], "Remove on restore")
+
+            exit_code = main(
+                [
+                    "--restore-ledger",
+                    str(snapshot),
+                    "--database",
+                    str(database),
+                    "--backups-directory",
+                    str(backups),
+                    "--diagnostic-output",
+                    str(output),
+                ]
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual([], WanderStore(database).get_journey("restore-cli")["work_items"])
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual("ok", report["status"])
+            self.assertEqual("restore-ledger", report["operation"])
+            self.assertEqual(str(database.resolve()), report["destination"])
 
 
 if __name__ == "__main__":

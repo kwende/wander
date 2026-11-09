@@ -127,6 +127,42 @@ class SnapshotManifest:
     inventory: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RestoreSource:
+    kind: str
+    path: str
+    ledger_id: str | None
+    schema_version: int
+    sha256: str
+    inventory: dict[str, Any]
+    expected_destination: str | None = None
+
+
+@dataclass(frozen=True)
+class RestoreSafetyReceipt:
+    kind: str
+    backup_file: str
+    database: str
+    ledger_id: str | None
+    schema_version: int
+    backup_sha256: str
+    inventory: dict[str, Any]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class RestoreReceipt:
+    source: str
+    source_kind: str
+    destination: str
+    safety_backup: str | None
+    previous_ledger_id: str | None
+    restored_ledger_id: str
+    restored_schema: int
+    inventory: dict[str, Any]
+    restored_at: str
+
+
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 60 * 60
 DEFAULT_SNAPSHOT_RETENTION = 24 * 7
 SNAPSHOT_PREFIX = "ledger-snapshot-"
@@ -393,6 +429,15 @@ def _ledger_id(connection: sqlite3.Connection) -> str:
     return str(row[0])
 
 
+def _optional_ledger_id(connection: sqlite3.Connection) -> str | None:
+    if not _table_exists(connection, "ledger_metadata"):
+        return None
+    row = connection.execute(
+        "SELECT ledger_id FROM ledger_metadata WHERE singleton = 1"
+    ).fetchone()
+    return str(row[0]) if row is not None else None
+
+
 def _snapshot_manifest_path(snapshot_path: Path) -> Path:
     return snapshot_path.with_suffix(".json")
 
@@ -563,6 +608,273 @@ class SnapshotManager:
             self.snapshots_directory,
             retention=self.retention,
         )
+
+
+def verify_restore_source(
+    source_path: str | Path,
+    destination_path: str | Path,
+    supported_schema_version: int,
+) -> RestoreSource:
+    source = Path(source_path).resolve()
+    destination = Path(destination_path).resolve()
+    manifest_path = source.with_suffix(".json")
+    if not source.is_file():
+        raise PersistenceError(f"Wander restore source does not exist: {source}")
+    if not manifest_path.is_file():
+        raise PersistenceError(
+            f"Wander restore source has no verification manifest: {manifest_path}"
+        )
+    document = _read_json_object(manifest_path)
+    if "snapshot_file" in document:
+        manifest = verify_snapshot(source)
+        restore_source = RestoreSource(
+            kind="snapshot",
+            path=str(source),
+            ledger_id=manifest.ledger_id,
+            schema_version=manifest.schema_version,
+            sha256=manifest.sha256,
+            inventory=manifest.inventory,
+        )
+    elif document.get("kind") == "restore-safety-backup":
+        if document.get("backup_file") != source.name:
+            raise PersistenceError("Restore safety manifest names a different backup")
+        if Path(str(document.get("database", ""))).resolve() != destination:
+            raise PersistenceError("Restore safety backup belongs to a different database")
+        restore_source = _verify_legacy_restore_source(
+            source,
+            document,
+            kind="restore-safety-backup",
+            expected_schema_field="schema_version",
+            expected_hash_field="backup_sha256",
+            ledger_id=document.get("ledger_id"),
+            expected_destination=str(destination),
+        )
+    elif "backup_sha256" in document and "source_schema" in document:
+        if Path(str(document.get("backup", ""))).resolve() != source:
+            raise PersistenceError("Import receipt names a different backup")
+        if Path(str(document.get("destination", ""))).resolve() != destination:
+            raise PersistenceError("Import backup belongs to a different destination")
+        restore_source = _verify_legacy_restore_source(
+            source,
+            document,
+            kind="first-import-backup",
+            expected_schema_field="source_schema",
+            expected_hash_field="backup_sha256",
+            ledger_id=None,
+            expected_destination=str(destination),
+        )
+    else:
+        raise PersistenceError(f"Unrecognized Wander restore manifest: {manifest_path}")
+    if restore_source.schema_version > supported_schema_version:
+        raise PersistenceError(
+            f"Restore source schema {restore_source.schema_version} is newer than "
+            f"this application supports ({supported_schema_version})"
+        )
+    return restore_source
+
+
+def _verify_legacy_restore_source(
+    source: Path,
+    document: dict[str, Any],
+    *,
+    kind: str,
+    expected_schema_field: str,
+    expected_hash_field: str,
+    ledger_id: object,
+    expected_destination: str,
+) -> RestoreSource:
+    try:
+        expected_schema = int(document[expected_schema_field])
+        expected_hash = str(document[expected_hash_field])
+        inventory = document["inventory"]
+        if not isinstance(inventory, dict):
+            raise TypeError("inventory is not an object")
+    except (KeyError, TypeError, ValueError) as error:
+        raise PersistenceError(f"Invalid Wander restore manifest: {error}") from error
+    if _sha256(source) != expected_hash:
+        raise PersistenceError(f"Wander restore source hash mismatch: {source}")
+    with closing(_open_read_only(source)) as connection:
+        _assert_integrity(connection, str(source))
+        schema_version = _schema_version(connection)
+        actual_inventory = database_inventory(connection)
+        actual_ledger_id = _optional_ledger_id(connection)
+    if schema_version != expected_schema:
+        raise PersistenceError(f"Wander restore source schema mismatch: {source}")
+    if actual_inventory != inventory:
+        raise PersistenceError(f"Wander restore source inventory mismatch: {source}")
+    normalized_ledger_id = str(ledger_id) if ledger_id else actual_ledger_id
+    if normalized_ledger_id is not None and actual_ledger_id != normalized_ledger_id:
+        raise PersistenceError(f"Wander restore source ledger identity mismatch: {source}")
+    return RestoreSource(
+        kind=kind,
+        path=str(source),
+        ledger_id=normalized_ledger_id,
+        schema_version=schema_version,
+        sha256=expected_hash,
+        inventory=actual_inventory,
+        expected_destination=expected_destination,
+    )
+
+
+def _create_restore_safety_backup(
+    database: Path,
+    backups_directory: Path,
+) -> tuple[Path, RestoreSafetyReceipt]:
+    safety_directory = backups_directory / "pre-restore"
+    safety_backup = safety_directory / f"pre-restore-{_timestamp()}.db"
+    _backup_database(database, safety_backup)
+    try:
+        with closing(_open_read_only(safety_backup)) as connection:
+            _assert_integrity(connection, str(safety_backup))
+            receipt = RestoreSafetyReceipt(
+                kind="restore-safety-backup",
+                backup_file=safety_backup.name,
+                database=str(database),
+                ledger_id=_optional_ledger_id(connection),
+                schema_version=_schema_version(connection),
+                backup_sha256=_sha256(safety_backup),
+                inventory=database_inventory(connection),
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+        _write_json_atomic(asdict(receipt), safety_backup.with_suffix(".json"))
+        verify_restore_source(safety_backup, database, receipt.schema_version)
+        return safety_backup, receipt
+    except BaseException:
+        safety_backup.with_suffix(".json").unlink(missing_ok=True)
+        _remove_sqlite_files(safety_backup)
+        raise
+
+
+def restore_ledger(
+    source_path: str | Path,
+    destination_path: str | Path,
+    backups_directory: str | Path,
+    supported_schema_version: int,
+) -> RestoreReceipt:
+    source = Path(source_path).resolve()
+    destination = Path(destination_path).resolve()
+    backups = Path(backups_directory).resolve()
+    if source == destination:
+        raise PersistenceError("Restore source and destination must be different databases")
+    restore_directory = backups / "restores"
+    pending_path = restore_directory / "restore-pending.json"
+    with SingleInstanceLock(destination):
+        restore_source = verify_restore_source(
+            source,
+            destination,
+            supported_schema_version,
+        )
+        pending_matches = False
+        if pending_path.is_file():
+            pending = _read_json_object(pending_path)
+            pending_matches = (
+                Path(str(pending.get("source", ""))).resolve() == source
+                and Path(str(pending.get("destination", ""))).resolve() == destination
+            )
+            if not pending_matches:
+                raise PersistenceError(
+                    "A different Wander restore is incomplete; finish or inspect it first"
+                )
+
+        current_ledger_id: str | None = None
+        if destination.is_file():
+            with closing(_open_read_only(destination)) as connection:
+                _assert_integrity(connection, str(destination))
+                current_schema = _schema_version(connection)
+                if current_schema > supported_schema_version:
+                    raise PersistenceError(
+                        f"Current ledger schema {current_schema} is newer than this "
+                        f"application supports ({supported_schema_version})"
+                    )
+                current_ledger_id = _optional_ledger_id(connection)
+        identity_path = identity_path_for_database(destination)
+        registered_ledger_id: str | None = None
+        if identity_path.is_file():
+            identity = _read_json_object(identity_path)
+            if Path(str(identity.get("database", ""))).resolve() != destination:
+                raise PersistenceError("Wander ledger identity names a different database path")
+            registered_ledger_id = str(identity.get("ledger_id", "")) or None
+
+        if restore_source.ledger_id is not None:
+            expected_ids = {
+                value for value in (current_ledger_id, registered_ledger_id) if value is not None
+            }
+            if pending_matches and current_ledger_id == restore_source.ledger_id:
+                expected_ids = {restore_source.ledger_id}
+            if expected_ids and expected_ids != {restore_source.ledger_id}:
+                raise PersistenceError("Restore source belongs to a different Wander ledger")
+        elif restore_source.expected_destination != str(destination):
+            raise PersistenceError("Legacy restore source is not bound to this destination")
+
+        safety_backup: Path | None = None
+        if destination.is_file():
+            safety_backup, _ = _create_restore_safety_backup(destination, backups)
+
+        from wander.store import WanderStore
+
+        staged_destination = _temporary_path(destination)
+        published = False
+        try:
+            _backup_database(source, staged_destination)
+            staged_store = WanderStore(staged_destination)
+            restored_identity = staged_store.ledger_identity()
+            restored_ledger_id = str(restored_identity["ledger_id"])
+            _finalize_staged_database(staged_destination)
+            with closing(_open_read_only(staged_destination)) as connection:
+                _assert_integrity(connection, str(staged_destination))
+                restored_schema = _schema_version(connection)
+                restored_inventory = database_inventory(connection)
+            if restored_schema != supported_schema_version:
+                raise PersistenceError(
+                    f"Restored ledger schema is {restored_schema}; "
+                    f"expected {supported_schema_version}"
+                )
+            if restored_inventory != restore_source.inventory:
+                raise PersistenceError("Restored ledger inventory differs from its source")
+            if (
+                restore_source.ledger_id is not None
+                and restored_ledger_id != restore_source.ledger_id
+            ):
+                raise PersistenceError("Restored ledger identity differs from its source")
+
+            pending_document = {
+                "source": str(source),
+                "destination": str(destination),
+                "restored_ledger_id": restored_ledger_id,
+                "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            }
+            _write_json_atomic(pending_document, pending_path)
+            if destination.is_file():
+                _finalize_staged_database(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staged_destination, destination)
+            published = True
+            identity_receipt = LedgerIdentityReceipt(
+                database=str(destination),
+                ledger_id=restored_ledger_id,
+                registered_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            _write_json_atomic(asdict(identity_receipt), identity_path)
+            receipt = RestoreReceipt(
+                source=str(source),
+                source_kind=restore_source.kind,
+                destination=str(destination),
+                safety_backup=str(safety_backup) if safety_backup is not None else None,
+                previous_ledger_id=current_ledger_id or registered_ledger_id,
+                restored_ledger_id=restored_ledger_id,
+                restored_schema=restored_schema,
+                inventory=restored_inventory,
+                restored_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            restore_receipt_path = restore_directory / f"restore-{_timestamp()}.json"
+            _write_json_atomic(asdict(receipt), restore_receipt_path)
+            pending_path.unlink(missing_ok=True)
+            return receipt
+        except BaseException:
+            _remove_sqlite_files(staged_destination)
+            if not published:
+                pending_path.unlink(missing_ok=True)
+            raise
 
 
 def new_ledger_is_authorized(database_path: str | Path) -> bool:

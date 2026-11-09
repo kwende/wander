@@ -39,6 +39,7 @@ from wander.persistence import (
     import_legacy_database,
     new_ledger_is_authorized,
     preflight_ledger_identity,
+    restore_ledger,
     validate_or_register_ledger_identity,
 )
 from wander.store import SCHEMA_VERSION, WanderError, WanderStore
@@ -459,12 +460,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--check-database", type=Path)
     parser.add_argument("--import-legacy-database", type=Path)
+    parser.add_argument("--restore-ledger", type=Path)
     parser.add_argument("--diagnostic-output", type=Path)
     arguments = parser.parse_args(argv)
     diagnostic_modes = (
         bool(arguments.self_test),
         arguments.check_database is not None,
         arguments.import_legacy_database is not None,
+        arguments.restore_ledger is not None,
     )
     if sum(diagnostic_modes) > 1:
         parser.error("diagnostic modes are mutually exclusive")
@@ -493,6 +496,26 @@ def main(argv: list[str] | None = None) -> int:
         _write_diagnostic(arguments.diagnostic_output, {"status": "ok", **report})
         return 0 if report["compatible"] else 2
     database_path = arguments.database or default_database_path()
+    if arguments.restore_ledger:
+        try:
+            receipt = restore_ledger(
+                arguments.restore_ledger,
+                database_path,
+                arguments.backups_directory
+                or backup_directory_for_database(database_path),
+                SCHEMA_VERSION,
+            )
+        except Exception as error:
+            _write_diagnostic(
+                arguments.diagnostic_output,
+                {"status": "error", "error": str(error), "traceback": traceback.format_exc()},
+            )
+            return 1
+        _write_diagnostic(
+            arguments.diagnostic_output,
+            {"status": "ok", "operation": "restore-ledger", **asdict(receipt)},
+        )
+        return 0
     if arguments.import_legacy_database:
         try:
             receipt = import_legacy_database(
