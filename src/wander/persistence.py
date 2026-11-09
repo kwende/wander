@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -12,6 +13,11 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from wander.logging_config import event_fields
+
+
+logger = logging.getLogger("wander.persistence")
 
 
 class PersistenceError(RuntimeError):
@@ -540,6 +546,14 @@ def create_verified_snapshot(
 ) -> Path | None:
     database = Path(database_path).resolve()
     snapshots = Path(snapshots_directory).resolve()
+    logger.info(
+        "Snapshot evaluation started",
+        extra=event_fields(
+            "snapshot.evaluate.started",
+            database=str(database),
+            snapshots_directory=str(snapshots),
+        ),
+    )
     if not database.is_file():
         raise PersistenceError(f"Wander database does not exist: {database}")
     with closing(_open_read_only(database)) as connection:
@@ -553,6 +567,15 @@ def create_verified_snapshot(
         and latest.schema_version == schema_version
         and latest.inventory == inventory
     ):
+        logger.info(
+            "Snapshot skipped because the ledger is unchanged",
+            extra=event_fields(
+                "snapshot.skipped",
+                database=str(database),
+                ledger_id=ledger_id,
+                reason="semantic-inventory-unchanged",
+            ),
+        )
         return None
 
     snapshots.mkdir(parents=True, exist_ok=True)
@@ -580,9 +603,29 @@ def create_verified_snapshot(
         )
         _write_json_atomic(asdict(manifest), manifest_path)
         verify_snapshot(snapshot)
-        prune_snapshots(snapshots, retention)
+        removed = prune_snapshots(snapshots, retention)
+        logger.info(
+            "Verified snapshot created",
+            extra=event_fields(
+                "snapshot.created",
+                database=str(database),
+                snapshot=str(snapshot),
+                ledger_id=manifest.ledger_id,
+                schema_version=manifest.schema_version,
+                size_bytes=manifest.size_bytes,
+                pruned_generations=len(removed),
+            ),
+        )
         return snapshot
     except BaseException:
+        logger.exception(
+            "Snapshot creation failed",
+            extra=event_fields(
+                "snapshot.failed",
+                database=str(database),
+                snapshot=str(snapshot),
+            ),
+        )
         manifest_path.unlink(missing_ok=True)
         _remove_sqlite_files(snapshot)
         raise
@@ -754,6 +797,15 @@ def restore_ledger(
     source = Path(source_path).resolve()
     destination = Path(destination_path).resolve()
     backups = Path(backups_directory).resolve()
+    logger.info(
+        "Ledger restore started",
+        extra=event_fields(
+            "restore.started",
+            source=str(source),
+            destination=str(destination),
+            backups_directory=str(backups),
+        ),
+    )
     if source == destination:
         raise PersistenceError("Restore source and destination must be different databases")
     restore_directory = backups / "restores"
@@ -763,6 +815,16 @@ def restore_ledger(
             source,
             destination,
             supported_schema_version,
+        )
+        logger.info(
+            "Restore source verified",
+            extra=event_fields(
+                "restore.source.verified",
+                source=str(source),
+                source_kind=restore_source.kind,
+                schema_version=restore_source.schema_version,
+                ledger_id=restore_source.ledger_id,
+            ),
         )
         pending_matches = False
         if pending_path.is_file():
@@ -809,6 +871,14 @@ def restore_ledger(
         safety_backup: Path | None = None
         if destination.is_file():
             safety_backup, _ = _create_restore_safety_backup(destination, backups)
+            logger.info(
+                "Pre-restore safety backup verified",
+                extra=event_fields(
+                    "restore.safety_backup.created",
+                    destination=str(destination),
+                    safety_backup=str(safety_backup),
+                ),
+            )
 
         from wander.store import WanderStore
 
@@ -849,6 +919,15 @@ def restore_ledger(
             destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged_destination, destination)
             published = True
+            logger.info(
+                "Restored database published",
+                extra=event_fields(
+                    "restore.database.published",
+                    source=str(source),
+                    destination=str(destination),
+                    restored_ledger_id=restored_ledger_id,
+                ),
+            )
             identity_receipt = LedgerIdentityReceipt(
                 database=str(destination),
                 ledger_id=restored_ledger_id,
@@ -869,8 +948,30 @@ def restore_ledger(
             restore_receipt_path = restore_directory / f"restore-{_timestamp()}.json"
             _write_json_atomic(asdict(receipt), restore_receipt_path)
             pending_path.unlink(missing_ok=True)
+            logger.info(
+                "Ledger restore completed",
+                extra=event_fields(
+                    "restore.completed",
+                    source=str(source),
+                    destination=str(destination),
+                    source_kind=restore_source.kind,
+                    safety_backup=receipt.safety_backup,
+                    restored_ledger_id=receipt.restored_ledger_id,
+                    restored_schema=receipt.restored_schema,
+                ),
+            )
             return receipt
         except BaseException:
+            logger.exception(
+                "Ledger restore failed",
+                extra=event_fields(
+                    "restore.failed",
+                    source=str(source),
+                    destination=str(destination),
+                    database_published=published,
+                    pending_receipt=str(pending_path) if published else None,
+                ),
+            )
             _remove_sqlite_files(staged_destination)
             if not published:
                 pending_path.unlink(missing_ok=True)
@@ -1137,15 +1238,71 @@ def import_legacy_database(
     destination_path: str | Path,
     backups_directory: str | Path,
 ) -> ImportReceipt:
+    logger.info(
+        "Legacy ledger import started",
+        extra=event_fields(
+            "import.started",
+            source=str(Path(source_path).resolve()),
+            destination=str(Path(destination_path).resolve()),
+        ),
+    )
     try:
-        return _import_legacy_database(source_path, destination_path, backups_directory)
+        receipt = _import_legacy_database(
+            source_path,
+            destination_path,
+            backups_directory,
+        )
+        logger.info(
+            "Legacy ledger import completed",
+            extra=event_fields(
+                "import.completed",
+                source=receipt.source,
+                destination=receipt.destination,
+                backup=receipt.backup,
+                ledger_id=receipt.ledger_id,
+                destination_schema=receipt.destination_schema,
+            ),
+        )
+        return receipt
     except PersistenceError:
+        logger.exception(
+            "Legacy ledger import failed",
+            extra=event_fields(
+                "import.failed",
+                source=str(Path(source_path).resolve()),
+                destination=str(Path(destination_path).resolve()),
+            ),
+        )
         raise
     except sqlite3.Error as error:
+        logger.exception(
+            "Legacy ledger import failed",
+            extra=event_fields(
+                "import.failed",
+                source=str(Path(source_path).resolve()),
+                destination=str(Path(destination_path).resolve()),
+            ),
+        )
         raise PersistenceError(f"SQLite migration failed: {error}") from error
     except Exception as error:
         from wander.store import WanderError
 
         if isinstance(error, WanderError):
+            logger.exception(
+                "Legacy ledger import failed",
+                extra=event_fields(
+                    "import.failed",
+                    source=str(Path(source_path).resolve()),
+                    destination=str(Path(destination_path).resolve()),
+                ),
+            )
             raise PersistenceError(f"Wander schema migration failed: {error}") from error
+        logger.exception(
+            "Legacy ledger import failed",
+            extra=event_fields(
+                "import.failed",
+                source=str(Path(source_path).resolve()),
+                destination=str(Path(destination_path).resolve()),
+            ),
+        )
         raise

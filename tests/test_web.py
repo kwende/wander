@@ -61,6 +61,23 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertEqual("local-authoring", result["jaunts_mode"])
         self.assertEqual("http://10.20.30.40:8765", result["share_base_url"])
 
+    def test_request_log_records_metadata_without_query_content(self) -> None:
+        with self.assertLogs("wander.web", level="INFO") as captured:
+            with urllib.request.urlopen(
+                f"{self.base_url}/api/journeys?private=do-not-log"
+            ) as response:
+                self.assertEqual(200, response.status)
+
+        record = next(
+            record
+            for record in captured.records
+            if getattr(record, "event_name", None) == "http.request.completed"
+        )
+        self.assertEqual("GET", record.event_fields["method"])
+        self.assertEqual("/api/journeys", record.event_fields["path"])
+        self.assertEqual(200, record.event_fields["status"])
+        self.assertNotIn("private", json.dumps(record.event_fields))
+
     def test_initial_page_includes_wander_tagline(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/") as response:
             page = response.read().decode("utf-8")

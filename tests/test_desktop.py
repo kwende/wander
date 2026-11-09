@@ -15,6 +15,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from urllib.request import urlopen
+from unittest.mock import patch
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -481,6 +482,23 @@ class DesktopHostTests(unittest.TestCase):
             self.assertEqual("ok", report["status"])
             self.assertFalse(report["compatible"])
             self.assertEqual(6, report["schema_version"])
+
+    def test_logging_configuration_failure_is_visible_and_prevents_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database = Path(temporary_directory) / "wander.db"
+            with (
+                patch(
+                    "wander.desktop.configure_logging",
+                    side_effect=OSError("logs unavailable"),
+                ),
+                patch("wander.desktop.show_startup_error") as show_error,
+            ):
+                exit_code = main(["--database", str(database)])
+
+            self.assertEqual(1, exit_code)
+            self.assertFalse(database.exists())
+            show_error.assert_called_once()
+            self.assertIn("persistent logging", show_error.call_args.args[0])
 
     def test_legacy_import_mode_uses_application_migration_and_writes_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

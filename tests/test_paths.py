@@ -9,6 +9,7 @@ from wander.paths import (
     WanderPaths,
     backup_directory_for_database,
     default_database_path,
+    log_directory_for_database,
 )
 
 
@@ -44,6 +45,10 @@ class DatabasePathTests(unittest.TestCase):
             self.assertEqual(
                 Path("D:/repo/data/backups"),
                 backup_directory_for_database(database),
+            )
+            self.assertEqual(
+                Path("D:/repo/data/logs"),
+                log_directory_for_database(database),
             )
 
 

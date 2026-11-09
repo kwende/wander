@@ -160,6 +160,17 @@ It leaves `backups\restores\restore-pending.json` only when publication reached
 the point where operator recovery is required; rerunning the same restore can
 finish that interrupted operation.
 
+Wander writes structured JSON Lines diagnostics to
+`%LOCALAPPDATA%\Wander\logs\wander.jsonl`. The file rotates at 5 MB and retains
+ten older generations. Every record carries a timestamp, severity, application
+version, process/thread identity, and per-run correlation ID. Logged events
+cover process and listener lifecycle, ledger validation, HTTP request metadata,
+MCP tool names and outcomes, snapshots, imports, restores, and unhandled
+exceptions. Tool arguments, HTTP query strings and bodies, Journey/Jaunt text,
+Mathom content, credentials, and authorization headers are intentionally not
+recorded. An explicit development database keeps logs beside it; use
+`--logs-directory` to override that location.
+
 Each journey can expose ordered HTTP links beneath its description. The
 dashboard presents top-level work as a rolling horizon: **Now** for active or
 blocked work, **Next** for provisional known steps, and **Trail** for completed

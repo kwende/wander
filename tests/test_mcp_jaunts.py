@@ -67,6 +67,20 @@ class JauntMcpTests(unittest.TestCase):
             }.issubset(names)
         )
 
+    def test_mcp_operation_log_excludes_tool_arguments(self) -> None:
+        with self.assertLogs("wander.mcp", level="INFO") as captured:
+            mcp_server.create_jaunt("Secret title", "Secret notes")
+
+        record = next(
+            record
+            for record in captured.records
+            if getattr(record, "event_name", None) == "mcp.tool.completed"
+        )
+        self.assertEqual("create_jaunt", record.event_fields["tool"])
+        self.assertEqual("success", record.event_fields["outcome"])
+        self.assertNotIn("Secret title", str(record.event_fields))
+        self.assertNotIn("Secret notes", str(record.event_fields))
+
     def test_mcp_exposes_explicit_thread_links_without_caller_identity_tools(self) -> None:
         tools = asyncio.run(mcp_server.mcp.list_tools())
         names = {tool.name for tool in tools}

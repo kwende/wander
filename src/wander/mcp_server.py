@@ -1,16 +1,89 @@
 from __future__ import annotations
 
+import inspect
+import logging
+import time
+from functools import wraps
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from wander.mathoms import HippoClient
-from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderStore
+from wander.logging_config import event_fields
+from wander.store import THREAD_LINK_PATTERN, ValidationError, WanderError, WanderStore
+
+
+logger = logging.getLogger("wander.mcp")
+
+
+def _logged_mcp_operation(function: Any) -> Any:
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def async_wrapper(*args: object, **kwargs: object) -> object:
+            started = time.monotonic()
+            try:
+                result = await function(*args, **kwargs)
+            except Exception as error:
+                _log_mcp_failure(function.__name__, started, error)
+                raise
+            _log_mcp_success(function.__name__, started)
+            return result
+
+        return async_wrapper
+
+    @wraps(function)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        started = time.monotonic()
+        try:
+            result = function(*args, **kwargs)
+        except Exception as error:
+            _log_mcp_failure(function.__name__, started, error)
+            raise
+        _log_mcp_success(function.__name__, started)
+        return result
+
+    return wrapper
+
+
+def _log_mcp_success(tool: str, started: float) -> None:
+    logger.info(
+        "MCP tool completed",
+        extra=event_fields(
+            "mcp.tool.completed",
+            tool=tool,
+            outcome="success",
+            duration_ms=round((time.monotonic() - started) * 1000, 3),
+        ),
+    )
+
+
+def _log_mcp_failure(tool: str, started: float, error: Exception) -> None:
+    log = logger.warning if isinstance(error, WanderError) else logger.exception
+    log(
+        "MCP tool failed",
+        extra=event_fields(
+            "mcp.tool.failed",
+            tool=tool,
+            outcome="error",
+            error_type=type(error).__name__,
+            duration_ms=round((time.monotonic() - started) * 1000, 3),
+        ),
+    )
+
+
+class LoggedMCPServer(MCPServer):
+    def tool(self, *args: object, **kwargs: object) -> Any:
+        register = super().tool(*args, **kwargs)
+
+        def decorator(function: Any) -> Any:
+            return register(_logged_mcp_operation(function))
+
+        return decorator
 
 
 store: WanderStore | None = None
 hippo: HippoClient | None = None
-mcp = MCPServer(
+mcp = LoggedMCPServer(
     "wander",
     version="0.8.0",
     instructions=(
