@@ -166,6 +166,67 @@ function renderSubtaskList(journey, parentId, hierarchy) {
   return checklist;
 }
 
+function renderWorkItem(journey, item, hierarchy) {
+  const element = document.createElement("li");
+  element.className = "work-item";
+  element.dataset.status = item.status;
+  const detail = item.completion_evidence || item.notes || item.completion_criteria || item.status;
+  element.innerHTML = `
+    <span class="work-marker" aria-label="${item.status}">${markers[item.status]}</span>
+    <div>
+      <p class="work-title"></p>
+      <p class="work-notes"></p>
+    </div>`;
+  element.querySelector(".work-title").textContent = item.title;
+  element.querySelector(".work-notes").textContent = detail;
+  if (item.id === requestedItem) {
+    element.dataset.referenced = "true";
+    element.setAttribute("aria-current", "true");
+  }
+  if (isLocalAuthoringView) {
+    element.appendChild(createCodexLink(journey, item));
+  }
+
+  const hasChildren = hierarchy.childrenByParent.has(item.id);
+  const shouldExpand = ["active", "blocked"].includes(item.status)
+    || hierarchy.referencedAncestors.has(item.id);
+  if (hasChildren && shouldExpand) {
+    element.querySelector("div").appendChild(renderSubtaskList(journey, item.id, hierarchy));
+  }
+
+  if (item.links?.length) {
+    const commitLinks = document.createElement("div");
+    commitLinks.className = "commit-links";
+    const commitLabel = document.createElement("span");
+    commitLabel.textContent = "Commits:";
+    commitLinks.appendChild(commitLabel);
+    for (const link of item.links) {
+      const anchor = document.createElement("a");
+      anchor.href = link.url;
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.textContent = link.label;
+      commitLinks.appendChild(anchor);
+    }
+    element.querySelector("div").appendChild(commitLinks);
+  }
+  return element;
+}
+
+function renderFrontierGroup(fragment, name, items, journey, hierarchy, emptyText) {
+  const list = fragment.querySelector(`[data-list='${name}']`);
+  if (!items.length) {
+    const empty = document.createElement("li");
+    empty.className = "frontier-empty";
+    empty.textContent = emptyText;
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    list.appendChild(renderWorkItem(journey, item, hierarchy));
+  }
+}
+
 function renderJourney(journey) {
   const fragment = template.content.cloneNode(true);
   const hero = fragment.querySelector(".hero");
@@ -175,6 +236,12 @@ function renderJourney(journey) {
   text(fragment, "[data-field='title']", journey.title);
   text(fragment, "[data-field='objective']", journey.objective);
   text(fragment, "[data-field='updated']", `Updated ${formatDate(journey.updated_at)}`);
+  if (journey.current_phase || journey.current_summary) {
+    const currentPhase = fragment.querySelector("[data-section='current-phase']");
+    currentPhase.hidden = false;
+    text(fragment, "[data-field='current-phase']", journey.current_phase || "In progress");
+    text(fragment, "[data-field='current-summary']", journey.current_summary || "");
+  }
   const shareLink = fragment.querySelector("[data-action='share']");
   const shareUrl = buildShareUrl(journey);
   shareLink.href = shareUrl;
@@ -201,63 +268,38 @@ function renderJourney(journey) {
 
   const topLevelItems = journey.work_items.filter((item) => !item.parent_id);
   const hierarchy = buildWorkItemHierarchy(journey.work_items);
-  const relevantItems = topLevelItems.filter((item) => item.status !== "abandoned");
-  const completed = relevantItems.filter((item) => item.status === "complete").length;
-  const progress = relevantItems.length ? Math.round((completed / relevantItems.length) * 100) : 0;
-  text(fragment, "[data-field='progress']", `${completed}/${relevantItems.length} complete`);
-  fragment.querySelector("[data-field='progress-bar']").style.width = `${progress}%`;
-
-  const workList = fragment.querySelector("[data-list='work-items']");
-  if (!topLevelItems.length) {
-    workList.innerHTML = '<li class="work-notes">No work items have been added.</li>';
-  } else {
-    for (const item of topLevelItems) {
-      const element = document.createElement("li");
-      element.className = "work-item";
-      element.dataset.status = item.status;
-      const detail = item.completion_evidence || item.notes || item.completion_criteria || item.status;
-      element.innerHTML = `
-        <span class="work-marker" aria-label="${item.status}">${markers[item.status]}</span>
-        <div>
-          <p class="work-title"></p>
-          <p class="work-notes"></p>
-        </div>`;
-      element.querySelector(".work-title").textContent = item.title;
-      element.querySelector(".work-notes").textContent = detail;
-      if (item.id === requestedItem) {
-        element.dataset.referenced = "true";
-        element.setAttribute("aria-current", "true");
-      }
-      if (isLocalAuthoringView) {
-        element.appendChild(createCodexLink(journey, item));
-      }
-
-      const hasChildren = hierarchy.childrenByParent.has(item.id);
-      const shouldExpand = ["active", "blocked"].includes(item.status)
-        || hierarchy.referencedAncestors.has(item.id);
-      if (hasChildren && shouldExpand) {
-        element.querySelector("div").appendChild(renderSubtaskList(journey, item.id, hierarchy));
-      }
-
-      if (item.links?.length) {
-        const commitLinks = document.createElement("div");
-        commitLinks.className = "commit-links";
-        const commitLabel = document.createElement("span");
-        commitLabel.textContent = "Commits:";
-        commitLinks.appendChild(commitLabel);
-        for (const link of item.links) {
-          const anchor = document.createElement("a");
-          anchor.href = link.url;
-          anchor.target = "_blank";
-          anchor.rel = "noreferrer";
-          anchor.textContent = link.label;
-          commitLinks.appendChild(anchor);
-        }
-        element.querySelector("div").appendChild(commitLinks);
-      }
-      workList.appendChild(element);
-    }
-  }
+  const nowItems = topLevelItems.filter((item) => ["active", "blocked"].includes(item.status));
+  const nextItems = topLevelItems.filter((item) => item.status === "pending");
+  const trailItems = topLevelItems.filter((item) => ["complete", "abandoned"].includes(item.status));
+  text(
+    fragment,
+    "[data-field='frontier-summary']",
+    `${nowItems.length} now · ${nextItems.length} known next · ${trailItems.length} in trail`,
+  );
+  renderFrontierGroup(
+    fragment,
+    "now",
+    nowItems,
+    journey,
+    hierarchy,
+    "No active frontier. Start the next known item or scout the terrain.",
+  );
+  renderFrontierGroup(
+    fragment,
+    "next",
+    nextItems,
+    journey,
+    hierarchy,
+    "No known next step. Scouting can expose the next useful move.",
+  );
+  renderFrontierGroup(
+    fragment,
+    "trail",
+    trailItems,
+    journey,
+    hierarchy,
+    "No trail yet. The route will appear as work completes or is abandoned.",
+  );
 
   const eventList = fragment.querySelector("[data-list='events']");
   for (const event of journey.recent_events.slice(0, 8)) {

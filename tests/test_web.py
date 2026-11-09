@@ -69,6 +69,22 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertIn("Loading the workboard", page)
         self.assertIn("jaunts-dialog", page)
 
+    def test_dashboard_presents_work_as_a_rolling_frontier(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/") as response:
+            page = response.read().decode("utf-8")
+        with urllib.request.urlopen(f"{self.base_url}/app.js") as response:
+            script = response.read().decode("utf-8")
+
+        self.assertIn("Rolling horizon", page)
+        self.assertIn("Journey frontier", page)
+        self.assertIn('data-list="now"', page)
+        self.assertIn('data-list="next"', page)
+        self.assertIn('data-list="trail"', page)
+        self.assertIn('data-section="current-phase"', page)
+        self.assertNotIn("progress-track", page)
+        self.assertIn("known next", script)
+        self.assertIn("scout the terrain", script)
+
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/api/journeys",

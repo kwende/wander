@@ -18,6 +18,8 @@ mcp = MCPServer(
         "Pass the last-read aggregate version to every mutation after creation. "
         "Record evidence before Journey completion. "
         "Mutation results are compact deltas; chain writes with their returned version. "
+        "A Journey has a stable objective and a rolling planning horizon, not a fixed roadmap. "
+        "When the route is uncertain, begin with one scouting item and add evidence-supported work just in time. "
         "Jaunts are standalone, user-controlled lightweight tasks, not miniature Journeys. "
         "Create a Jaunt only when the user explicitly asks, and use its independent version for edits. "
         "Never emulate promotion by creating or labeling a Journey. "

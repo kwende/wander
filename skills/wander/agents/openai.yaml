@@ -1,7 +1,7 @@
 interface:
   display_name: "Wander"
-  short_description: "Track durable Journeys and quick Jaunts"
-  default_prompt: "Use $wander to create a Journey or manage my lightweight Jaunts."
+  short_description: "Track rolling-horizon Journeys and quick Jaunts"
+  default_prompt: "Use $wander to scout or continue a rolling-horizon Journey, or manage my lightweight Jaunts."
 
 dependencies:
   tools:

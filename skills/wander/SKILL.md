@@ -21,9 +21,11 @@ understandable in the dashboard.
    when one is available through a supported host surface or supplied by the
    user. Treat it as ordinary navigation data; it does not identify the MCP
    caller or affect authorization, provenance, concurrency, or mutations.
-4. Add a small ordered set of semantic work items that communicates what
-   happened, where work is now, and what remains. Prefer roughly 3-7 top-level
-   milestones; use more only when the user needs them.
+4. Build only the planning horizon the current evidence supports. If the route
+   is uncertain, add one scouting item that reconstructs the terrain, records
+   important unknowns, and exposes the next useful frontier. Do not invent an
+   end-to-end roadmap or add placeholder milestones to make the Journey look
+   complete.
 5. Start the item that represents the actual current activity. If it has two or
    more known steps that can be executed or verified independently, add them as
    children so the active path is resumable. Do not mark an item complete
@@ -61,6 +63,15 @@ may differ), treat it as an identity pointer rather than sufficient context:
   blockable, delegable, or returnable. The deepest active child should describe
   the user's current focus; its parents provide purpose and its siblings show
   what comes next.
+- Treat every Journey as a rolling horizon rather than a fixed roadmap. The
+  stable objective explains why the work exists; active or blocked items are
+  **Now**, pending items are provisional **Next**, and completed or abandoned
+  items form the **Trail**. A pending item is evidence-supported intent, not a
+  promise that later discovery cannot replace or expand it.
+- Scouting is a first-class Journey phase. Use an active scouting item when the
+  route is not yet understood, or when later work exposes new terrain. Complete
+  scouting with evidence about what was learned, then add only the newly
+  supported frontier. Scouting may recur; it is not limited to Journey setup.
 - Do not pre-expand speculative future work or command-by-command mechanics.
   Checkpoints preserve causal context and invariants, but do not replace the
   visible checklist of current execution steps.

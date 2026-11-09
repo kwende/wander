@@ -110,10 +110,29 @@ machine.
 
 ## Active-work detail and resumability
 
-Keep the journey's stable milestone list concise, but optimize the active work
-path for interruption recovery rather than brevity. When an active item has two
-or more known steps that can be started, completed, verified, blocked,
-delegated, or returned to independently, add those steps as child work items.
+A Journey is a stable objective with a rolling planning horizon, not a promise
+that its complete route is known. Treat work items as the current shared map:
+
+- **Now** is the active frontier, including blocked work that still defines the
+  current edge of understanding.
+- **Next** contains only evidence-supported steps that are understood well
+  enough to start. These items are provisional and may be expanded, abandoned,
+  or displaced as the Journey reveals new paths.
+- **Trail** is completed or deliberately abandoned work. It explains how the
+  current frontier was reached without pretending the original route survived
+  unchanged.
+
+When the route is uncertain, begin with one active scouting item instead of
+inventing an end-to-end roadmap. Scouting reconstructs the relevant terrain,
+records important unknowns, and exposes the next useful frontier. It may produce
+one next step, several branches, or evidence that the Journey should stop. A
+Journey may return to scouting whenever a later step reveals substantial new
+terrain.
+
+Optimize the active path for interruption recovery rather than brevity. When an
+active item has two or more known steps that can be started, completed,
+verified, blocked, delegated, or returned to independently, add those steps as
+child work items.
 
 Build this checklist just in time as the execution path becomes known. Do not
 pre-expand speculative future work or record command-by-command mechanics. The
@@ -122,8 +141,9 @@ parents explain why that work matters and its siblings show where to return
 next. A checkpoint preserves causal context, decisions, and invariants; it is
 not a substitute for the visible checklist of current execution steps.
 
-Completed work and future milestones may remain compact. Add detail when it is
-needed to survive distraction, context switching, delegation, or a handoff.
+Completed work and known next steps may remain compact. Never add speculative
+milestones merely to make a Journey look complete. Add detail when it is needed
+to survive distraction, context switching, delegation, or a handoff.
 
 ## Information-model feedback
 

@@ -97,6 +97,11 @@
           <span>Journey Description:</span>
           <span data-field="objective"></span>
         </p>
+        <div class="current-phase" data-section="current-phase" hidden>
+          <span>Current phase:</span>
+          <strong data-field="current-phase"></strong>
+          <p data-field="current-summary"></p>
+        </div>
         <div class="journey-links" data-section="journey-links" hidden>
           <span>Links:</span>
           <div class="link-list" data-list="journey-links"></div>
@@ -108,13 +113,34 @@
       <div class="panel work-panel">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">Execution</p>
-            <h3>Work items</h3>
+            <p class="eyebrow">Rolling horizon</p>
+            <h3>Journey frontier</h3>
           </div>
-          <span class="progress-label" data-field="progress"></span>
+          <span class="frontier-summary" data-field="frontier-summary"></span>
         </div>
-        <div class="progress-track"><span data-field="progress-bar"></span></div>
-        <ol class="work-list" data-list="work-items"></ol>
+        <div class="frontier-groups">
+          <section class="frontier-group" data-frontier-group="now">
+            <div class="frontier-heading">
+              <h4>Now</h4>
+              <p>The active edge of understanding, including current blockers.</p>
+            </div>
+            <ol class="work-list" data-list="now"></ol>
+          </section>
+          <section class="frontier-group" data-frontier-group="next">
+            <div class="frontier-heading">
+              <h4>Next</h4>
+              <p>Known moves, held provisionally until scouting reveals more.</p>
+            </div>
+            <ol class="work-list" data-list="next"></ol>
+          </section>
+          <section class="frontier-group" data-frontier-group="trail">
+            <div class="frontier-heading">
+              <h4>Trail</h4>
+              <p>Completed and deliberately abandoned parts of the route.</p>
+            </div>
+            <ol class="work-list" data-list="trail"></ol>
+          </section>
+        </div>
       </div>
     </section>
 

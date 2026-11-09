@@ -1,10 +1,12 @@
 # Wander
 
-Wander is a durable, multi-thread workboard for Codex journeys. SQLite is the
-authoritative state. Codex mutates that state through semantic MCP tools; the
-network Journey dashboard is deliberately read-only. The same application has
-a localhost-only modal for human-controlled Jaunts: independent lightweight
-tasks with free-form notes and retained history.
+Wander is a durable, multi-thread workboard for rolling-horizon Codex journeys.
+A Journey keeps its objective stable while its active frontier and known next
+steps evolve through scouting and execution. SQLite is the authoritative state.
+Codex mutates that state through semantic MCP tools; the network Journey
+dashboard is deliberately read-only. The same application has a localhost-only
+modal for human-controlled Jaunts: independent lightweight tasks with free-form
+notes and retained history.
 
 Wander also names user-requested nuggets of retained knowledge **Mathoms**.
 Mathoms are stored only in Hippo, attributed to the `wander` source system, and
@@ -116,12 +118,16 @@ operation because it discards writes made after the selected snapshot. Until
 the ledger cutover and Codex registration batch is complete, use `-StageOnly`
 or temporary install/data roots rather than installing to the default paths.
 
-Each journey can expose ordered HTTP links beneath its description. Active or
-blocked parent work items expand into a read-only child checklist so the current
-acceptance criteria are visible; completed parents collapse that detail. A
-completed item can also retain verified GitHub commit links as code provenance.
-The shared-journey URL (`?journey=<slug>&shared=1`) hides journey selection and
-the Share control while preserving the journey links and work state.
+Each journey can expose ordered HTTP links beneath its description. The
+dashboard presents top-level work as a rolling horizon: **Now** for active or
+blocked work, **Next** for provisional known steps, and **Trail** for completed
+or deliberately abandoned work. It does not calculate a completion percentage
+over a route that may still change. Active or blocked parent work items expand
+into a read-only child checklist so the current acceptance criteria are visible;
+completed parents collapse that detail. A completed item can also retain
+verified GitHub commit links as code provenance. The shared-journey URL
+(`?journey=<slug>&shared=1`) hides journey selection and the Share control while
+preserving the journey links and work state.
 
 When a journey contains exactly one GitHub issue link, Codex can project its
 current phase and work-item checklist into one dedicated issue comment. The
@@ -172,9 +178,10 @@ an existing matching registration.
 Open Wander from the Desktop or Start Menu and restart Codex afterward. The MCP
 endpoint exists only while the application is open. A conversation can then say
 `Make a Wander out of our task`; the skill discovers or creates the journey,
-optionally attaches a supported chat deep link for navigation, and builds the
-high-level work-item sequence. The link is ordinary Journey data, not MCP caller
-identity.
+optionally attaches a supported chat deep link for navigation, and builds only
+the planning horizon supported by current evidence. An uncertain Journey may
+begin with one scouting item and no invented downstream roadmap. The link is
+ordinary Journey data, not MCP caller identity.
 
 To enable Mathom tools, configure the Hippo MCP endpoint and the dedicated
 Wander credential before starting Codex:
