@@ -210,6 +210,19 @@ Journey. Agents have equivalent semantic MCP tools. Jaunts have independent
 versions and no Journey relationship; promotion is a separate capability and
 must never be simulated by creating a labeled Journey.
 
+A standalone marker line records an external dependency without turning it into
+another lifecycle state:
+
+```text
+[waiting: Noah to contact Cozad]
+```
+
+The local `Waiting` view combines markers from open Jaunts with blocked work
+items in active or paused Journeys. For Journey work, include the marker in the
+blocking reason. `list_waiting` exposes the same derived, read-only index to
+agents. Removing a Jaunt marker or restarting a blocked work item clears it from
+the current Waiting view; the original notes and events remain historical.
+
 The repository's `.mcp.json` points to the desktop application's localhost MCP
 endpoint. It never starts a second Wander process or opens SQLite. Open Wander
 before using repository-scoped MCP tools.

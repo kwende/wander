@@ -267,6 +267,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status = status_values[0] if status_values else None
                 self._send_json(HTTPStatus.OK, self.store.list_jaunts(status))
                 return
+            if path == "/api/waiting":
+                self._require_local_jaunts()
+                self._send_json(HTTPStatus.OK, self.store.list_waiting())
+                return
             if path.startswith("/api/jaunts/"):
                 self._require_local_jaunts()
                 jaunt_id = path.removeprefix("/api/jaunts/")

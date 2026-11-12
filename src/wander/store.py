@@ -41,6 +41,10 @@ JAUNT_TRANSITIONS = {
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
+WAITING_MARKER_PATTERN = re.compile(
+    r"^[ \t]*\[waiting:[ \t]*(?P<description>[^\]\r\n]+?)[ \t]*\][ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 SCHEMA_VERSION = 5
 
 
@@ -62,6 +66,14 @@ class ValidationError(WanderError):
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def parse_waiting_descriptions(notes: str) -> list[str]:
+    return [
+        description
+        for match in WAITING_MARKER_PATTERN.finditer(notes)
+        if (description := match.group("description").strip())
+    ]
 
 
 class WanderStore:
@@ -627,6 +639,60 @@ class WanderStore:
         query += " ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, updated_at DESC"
         with self._connection() as connection:
             return [dict(row) for row in connection.execute(query, parameters).fetchall()]
+
+    def list_waiting(self) -> list[dict[str, Any]]:
+        waiting: list[dict[str, Any]] = []
+        with self._connection() as connection:
+            jaunts = connection.execute(
+                """
+                SELECT id, title, notes, updated_at
+                FROM jaunts
+                WHERE status = 'open'
+                """
+            ).fetchall()
+            work_items = connection.execute(
+                """
+                SELECT
+                    work_items.id,
+                    work_items.title,
+                    work_items.notes,
+                    work_items.updated_at,
+                    journeys.slug AS journey_slug,
+                    journeys.title AS journey_title
+                FROM work_items
+                JOIN journeys ON journeys.id = work_items.journey_id
+                WHERE work_items.status = 'blocked'
+                  AND journeys.status IN ('active', 'paused')
+                """
+            ).fetchall()
+
+        for jaunt in jaunts:
+            for description in parse_waiting_descriptions(jaunt["notes"]):
+                waiting.append(
+                    {
+                        "subject_type": "jaunt",
+                        "subject_id": jaunt["id"],
+                        "subject_title": jaunt["title"],
+                        "journey_slug": None,
+                        "journey_title": None,
+                        "description": description,
+                        "updated_at": jaunt["updated_at"],
+                    }
+                )
+        for item in work_items:
+            for description in parse_waiting_descriptions(item["notes"]):
+                waiting.append(
+                    {
+                        "subject_type": "work_item",
+                        "subject_id": item["id"],
+                        "subject_title": item["title"],
+                        "journey_slug": item["journey_slug"],
+                        "journey_title": item["journey_title"],
+                        "description": description,
+                        "updated_at": item["updated_at"],
+                    }
+                )
+        return sorted(waiting, key=lambda item: item["updated_at"], reverse=True)
 
     def get_jaunt(self, jaunt_id: str) -> dict[str, Any]:
         with self._connection() as connection:

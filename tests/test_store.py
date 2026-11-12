@@ -6,7 +6,12 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from wander.store import ConflictError, ValidationError, WanderStore
+from wander.store import (
+    ConflictError,
+    ValidationError,
+    WanderStore,
+    parse_waiting_descriptions,
+)
 
 
 class WanderStoreTests(unittest.TestCase):
@@ -57,6 +62,89 @@ class WanderStoreTests(unittest.TestCase):
 
         with self.assertRaises(ConflictError):
             self.store.add_work_item("camera-reboot", version, "Overwrite newer state")
+
+    def test_waiting_list_combines_open_jaunts_and_blocked_work_items(self) -> None:
+        jaunt = self.store.create_jaunt(
+            "Investigate Cozad touchscreen",
+            "[waiting: Noah to contact Cozad]\n\nMachine is offline.",
+        )
+        completed_jaunt = self.store.create_jaunt(
+            "Old wait",
+            "[waiting: Someone to reply]",
+        )
+        self.store.complete_jaunt(
+            completed_jaunt["jaunt"],
+            completed_jaunt["version"],
+        )
+        journey = self.store.add_work_item(
+            "camera-reboot",
+            self.journey["version"],
+            "Validate the replacement camera",
+        )
+        item_id = journey["changed"]["work_item_ids"][0]
+        journey = self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            journey["version"],
+            "Starting validation",
+        )
+        blocked = self.store.block_work_item(
+            "camera-reboot",
+            item_id,
+            journey["version"],
+            "[waiting: QA to connect the replacement camera]",
+        )
+
+        waiting = self.store.list_waiting()
+
+        self.assertEqual(
+            {
+                (
+                    "jaunt",
+                    jaunt["jaunt"],
+                    "Noah to contact Cozad",
+                    None,
+                ),
+                (
+                    "work_item",
+                    item_id,
+                    "QA to connect the replacement camera",
+                    "camera-reboot",
+                ),
+            },
+            {
+                (
+                    item["subject_type"],
+                    item["subject_id"],
+                    item["description"],
+                    item["journey_slug"],
+                )
+                for item in waiting
+            },
+        )
+
+        self.store.start_work_item(
+            "camera-reboot",
+            item_id,
+            blocked["version"],
+            "The replacement camera is connected",
+        )
+        self.assertEqual(
+            [jaunt["jaunt"]],
+            [item["subject_id"] for item in self.store.list_waiting()],
+        )
+
+    def test_waiting_marker_must_be_a_nonempty_standalone_line(self) -> None:
+        self.assertEqual(
+            ["Noah to contact Cozad", "QA to connect the camera"],
+            parse_waiting_descriptions(
+                "Context\n"
+                "  [waiting: Noah to contact Cozad]  \n"
+                "This mentions [waiting: nobody] inline.\n"
+                "[waiting:]\n"
+                "[WAITING: QA to connect the camera]"
+            ),
+        )
 
     def test_completion_requires_active_item_and_evidence(self) -> None:
         journey = self.store.add_work_item(

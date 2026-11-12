@@ -67,6 +67,10 @@ machine.
   version/history. It has no Journey relationship unless a future explicit
   promotion operation records one. Never emulate a Jaunt with a labeled
   Journey or emulate promotion by creating a Journey independently.
+- Current waits are derived from standalone `[waiting: free-form description]`
+  note lines. Include open Jaunts and blocked work items in active or paused
+  Journeys; terminal work remains historical and does not appear in the waiting
+  index. Waiting is not a lifecycle status.
 - Create a Jaunt through MCP only when the user explicitly asks. Read the Jaunt
   before editing, completing, or reopening it, and pass its last-read version.
 - Mathoms are request-only knowledge retained in Hippo with `source_system` set

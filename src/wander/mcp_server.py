@@ -148,6 +148,12 @@ def list_jaunts(status: str | None = None) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def list_waiting() -> list[dict[str, Any]]:
+    """List open Jaunts and blocked Journey work items marked [waiting: description]."""
+    return store.list_waiting()
+
+
+@mcp.tool()
 def get_jaunt(jaunt_id: str) -> dict[str, Any]:
     """Get one standalone Jaunt with its retained event history."""
     return store.get_jaunt(jaunt_id)

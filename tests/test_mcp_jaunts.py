@@ -59,6 +59,7 @@ class JauntMcpTests(unittest.TestCase):
         self.assertTrue(
             {
                 "list_jaunts",
+                "list_waiting",
                 "get_jaunt",
                 "create_jaunt",
                 "update_jaunt",

@@ -14,6 +14,7 @@
       <p class="brand-tagline">Not all who wander are lost.</p>
     </div>
     <div class="topbar-actions">
+      <button id="waiting-button" type="button" hidden>Waiting (0)</button>
       <button id="jaunts-button" type="button" hidden>Jaunts</button>
       <label id="journey-select-label" for="journey-select">Journey</label>
       <select id="journey-select" aria-label="Select journey"></select>
@@ -28,6 +29,21 @@
       <p>Loading the workboard…</p>
     </section>
   </main>
+
+  <dialog id="waiting-dialog" class="waiting-dialog" aria-labelledby="waiting-title">
+    <div class="waiting-shell">
+      <header class="waiting-header">
+        <div>
+          <p class="eyebrow">External dependencies</p>
+          <h2 id="waiting-title">Waiting</h2>
+          <p>Open work that cannot move until something else happens.</p>
+        </div>
+        <button id="waiting-close" class="quiet-button" type="button" aria-label="Close Waiting">Close</button>
+      </header>
+      <div id="waiting-list" class="waiting-list" role="list"></div>
+      <p id="waiting-message" class="waiting-message" role="status"></p>
+    </div>
+  </dialog>
 
   <dialog id="jaunts-dialog" class="jaunts-dialog" aria-labelledby="jaunts-title">
     <div class="jaunts-shell">

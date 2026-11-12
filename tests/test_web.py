@@ -85,6 +85,7 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertIn("Not all who wander are lost.", page)
         self.assertIn("Loading the workboard", page)
         self.assertIn("jaunts-dialog", page)
+        self.assertIn("waiting-dialog", page)
 
     def test_dashboard_presents_work_as_a_rolling_frontier(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/") as response:
@@ -162,10 +163,31 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         listed = self.request_json("/api/jaunts")
         self.assertEqual([created["id"]], [jaunt["id"] for jaunt in listed])
 
+    def test_local_waiting_api_derives_open_jaunt_markers(self) -> None:
+        created = self.request_json(
+            "/api/jaunts",
+            "POST",
+            {
+                "title": "Investigate Cozad touchscreen",
+                "notes": "[waiting: Noah to contact Cozad]",
+            },
+        )
+
+        waiting = self.request_json("/api/waiting")
+
+        self.assertEqual(1, len(waiting))
+        self.assertEqual(created["id"], waiting[0]["subject_id"])
+        self.assertEqual("Noah to contact Cozad", waiting[0]["description"])
+
     def test_non_loopback_request_cannot_read_jaunts(self) -> None:
         with patch("wander.web.is_loopback_address", return_value=False):
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 urllib.request.urlopen(f"{self.base_url}/api/jaunts")
+        self.assertEqual(403, raised.exception.code)
+
+        with patch("wander.web.is_loopback_address", return_value=False):
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(f"{self.base_url}/api/waiting")
         self.assertEqual(403, raised.exception.code)
 
     def request_json(
