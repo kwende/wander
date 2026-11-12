@@ -111,6 +111,14 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertIn('event.key !== "Tab" || event.shiftKey', script)
         self.assertIn('jauntNotes.setRangeText(\n    "\\t"', script)
 
+    def test_open_jaunt_supports_ctrl_s_save(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/app.js") as response:
+            script = response.read().decode("utf-8")
+
+        self.assertIn('jauntSave.textContent = "Save (Ctrl-S)"', script)
+        self.assertIn('jauntForm.addEventListener("keydown"', script)
+        self.assertIn("jauntForm.requestSubmit()", script)
+
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/api/journeys",

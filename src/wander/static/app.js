@@ -431,7 +431,7 @@ function populateJauntEditor(jaunt) {
   const editable = jaunt.status === "open";
   jauntTitle.readOnly = !editable;
   jauntNotes.readOnly = !editable;
-  jauntSave.textContent = "Save";
+  jauntSave.textContent = "Save (Ctrl-S)";
   jauntSave.hidden = !editable;
   jauntComplete.hidden = !editable;
   jauntReopen.hidden = jaunt.status !== "completed";
@@ -616,6 +616,12 @@ jauntsRefresh.addEventListener("click", () => loadJaunts());
 jauntsShowCompleted.addEventListener("change", renderJauntList);
 jauntNew.addEventListener("click", resetJauntEditor);
 jauntForm.addEventListener("submit", saveJaunt);
+jauntForm.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey || event.key.toLowerCase() !== "s") return;
+
+  event.preventDefault();
+  if (!event.repeat && !jauntSave.hidden) jauntForm.requestSubmit();
+});
 jauntNotes.addEventListener("keydown", (event) => {
   if (event.key !== "Tab" || event.shiftKey) return;
 

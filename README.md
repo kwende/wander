@@ -209,6 +209,7 @@ edit, complete, reopen, and inspect their history without changing the selected
 Journey. Agents have equivalent semantic MCP tools. Jaunts have independent
 versions and no Journey relationship; promotion is a separate capability and
 must never be simulated by creating a labeled Journey.
+An open Jaunt can also be saved from its title or notes field with `Ctrl-S`.
 
 A standalone marker line records an external dependency without turning it into
 another lifecycle state:
