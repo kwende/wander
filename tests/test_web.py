@@ -102,6 +102,14 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertIn("known next", script)
         self.assertIn("scout the terrain", script)
 
+    def test_jaunt_notes_accept_tab_indentation(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/app.js") as response:
+            script = response.read().decode("utf-8")
+
+        self.assertIn('jauntNotes.addEventListener("keydown"', script)
+        self.assertIn('event.key !== "Tab" || event.shiftKey', script)
+        self.assertIn('jauntNotes.setRangeText(\n    "\\t"', script)
+
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/api/journeys",

@@ -549,6 +549,17 @@ jauntsRefresh.addEventListener("click", () => loadJaunts());
 jauntsShowCompleted.addEventListener("change", renderJauntList);
 jauntNew.addEventListener("click", resetJauntEditor);
 jauntForm.addEventListener("submit", saveJaunt);
+jauntNotes.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab" || event.shiftKey) return;
+
+  event.preventDefault();
+  jauntNotes.setRangeText(
+    "\t",
+    jauntNotes.selectionStart,
+    jauntNotes.selectionEnd,
+    "end",
+  );
+});
 jauntComplete.addEventListener("click", () => transitionJaunt("complete"));
 jauntReopen.addEventListener("click", () => transitionJaunt("reopen"));
 
