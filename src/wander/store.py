@@ -41,7 +41,11 @@ JAUNT_TRANSITIONS = {
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 THREAD_LINK_PATTERN = re.compile(r"^codex://threads/[0-9a-f-]+$", re.IGNORECASE)
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
-SCHEMA_VERSION = 4
+WAITING_MARKER_PATTERN = re.compile(
+    r"^[ \t]*\[waiting:[ \t]*(?P<description>[^\]\r\n]+?)[ \t]*\][ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+SCHEMA_VERSION = 5
 
 
 class WanderError(Exception):
@@ -62,6 +66,14 @@ class ValidationError(WanderError):
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def parse_waiting_descriptions(notes: str) -> list[str]:
+    return [
+        description
+        for match in WAITING_MARKER_PATTERN.finditer(notes)
+        if (description := match.group("description").strip())
+    ]
 
 
 class WanderStore:
@@ -94,6 +106,13 @@ class WanderStore:
             self._migrate_project_schema(connection)
             connection.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS ledger_metadata (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    ledger_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    ever_nonempty INTEGER NOT NULL DEFAULT 0 CHECK (ever_nonempty IN (0, 1))
+                );
+
                 CREATE TABLE IF NOT EXISTS journeys (
                     id TEXT PRIMARY KEY,
                     slug TEXT NOT NULL UNIQUE,
@@ -224,6 +243,37 @@ class WanderStore:
 
                 CREATE INDEX IF NOT EXISTS ix_jaunt_events_jaunt_id
                     ON jaunt_events(jaunt_id, id DESC);
+
+                CREATE TRIGGER IF NOT EXISTS mark_ledger_nonempty_on_journey
+                AFTER INSERT ON journeys
+                BEGIN
+                    UPDATE ledger_metadata SET ever_nonempty = 1 WHERE singleton = 1;
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS mark_ledger_nonempty_on_jaunt
+                AFTER INSERT ON jaunts
+                BEGIN
+                    UPDATE ledger_metadata SET ever_nonempty = 1 WHERE singleton = 1;
+                END;
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO ledger_metadata (
+                    singleton, ledger_id, created_at, ever_nonempty
+                ) VALUES (1, ?, ?, 0)
+                """,
+                (str(uuid.uuid4()), utc_now()),
+            )
+            connection.execute(
+                """
+                UPDATE ledger_metadata
+                SET ever_nonempty = 1
+                WHERE singleton = 1
+                  AND (
+                      EXISTS (SELECT 1 FROM journeys)
+                      OR EXISTS (SELECT 1 FROM jaunts)
+                  )
                 """
             )
             journey_columns = {
@@ -235,6 +285,27 @@ class WanderStore:
             self._migrate_jaunt_schema(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
+
+    def ledger_identity(self) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT ledger_id, created_at, ever_nonempty,
+                       (SELECT COUNT(*) FROM journeys) AS journey_count,
+                       (SELECT COUNT(*) FROM jaunts) AS jaunt_count
+                FROM ledger_metadata
+                WHERE singleton = 1
+                """
+            ).fetchone()
+        if row is None:
+            raise ConflictError("Wander ledger identity is missing")
+        return {
+            "ledger_id": row["ledger_id"],
+            "created_at": row["created_at"],
+            "ever_nonempty": bool(row["ever_nonempty"]),
+            "journey_count": row["journey_count"],
+            "jaunt_count": row["jaunt_count"],
+        }
 
     @staticmethod
     def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
@@ -568,6 +639,60 @@ class WanderStore:
         query += " ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, updated_at DESC"
         with self._connection() as connection:
             return [dict(row) for row in connection.execute(query, parameters).fetchall()]
+
+    def list_waiting(self) -> list[dict[str, Any]]:
+        waiting: list[dict[str, Any]] = []
+        with self._connection() as connection:
+            jaunts = connection.execute(
+                """
+                SELECT id, title, notes, updated_at
+                FROM jaunts
+                WHERE status = 'open'
+                """
+            ).fetchall()
+            work_items = connection.execute(
+                """
+                SELECT
+                    work_items.id,
+                    work_items.title,
+                    work_items.notes,
+                    work_items.updated_at,
+                    journeys.slug AS journey_slug,
+                    journeys.title AS journey_title
+                FROM work_items
+                JOIN journeys ON journeys.id = work_items.journey_id
+                WHERE work_items.status = 'blocked'
+                  AND journeys.status IN ('active', 'paused')
+                """
+            ).fetchall()
+
+        for jaunt in jaunts:
+            for description in parse_waiting_descriptions(jaunt["notes"]):
+                waiting.append(
+                    {
+                        "subject_type": "jaunt",
+                        "subject_id": jaunt["id"],
+                        "subject_title": jaunt["title"],
+                        "journey_slug": None,
+                        "journey_title": None,
+                        "description": description,
+                        "updated_at": jaunt["updated_at"],
+                    }
+                )
+        for item in work_items:
+            for description in parse_waiting_descriptions(item["notes"]):
+                waiting.append(
+                    {
+                        "subject_type": "work_item",
+                        "subject_id": item["id"],
+                        "subject_title": item["title"],
+                        "journey_slug": item["journey_slug"],
+                        "journey_title": item["journey_title"],
+                        "description": description,
+                        "updated_at": item["updated_at"],
+                    }
+                )
+        return sorted(waiting, key=lambda item: item["updated_at"], reverse=True)
 
     def get_jaunt(self, jaunt_id: str) -> dict[str, Any]:
         with self._connection() as connection:

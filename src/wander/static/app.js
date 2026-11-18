@@ -3,6 +3,11 @@ const selectLabel = document.querySelector("#journey-select-label");
 const refreshButton = document.querySelector("#refresh-button");
 const dashboard = document.querySelector("#dashboard");
 const template = document.querySelector("#journey-template");
+const waitingButton = document.querySelector("#waiting-button");
+const waitingDialog = document.querySelector("#waiting-dialog");
+const waitingClose = document.querySelector("#waiting-close");
+const waitingList = document.querySelector("#waiting-list");
+const waitingMessage = document.querySelector("#waiting-message");
 const jauntsButton = document.querySelector("#jaunts-button");
 const jauntsDialog = document.querySelector("#jaunts-dialog");
 const jauntsClose = document.querySelector("#jaunts-close");
@@ -28,6 +33,7 @@ const sharedJourney = query.get("shared") === "1" ? requestedJourney : null;
 const localAuthoringHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const isLocalAuthoringView = !sharedJourney && localAuthoringHosts.has(window.location.hostname);
 let shareBaseUrl = window.location.origin;
+let loadedWaiting = [];
 let loadedJaunts = [];
 let selectedJaunt = null;
 
@@ -325,6 +331,60 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
+function renderWaiting() {
+  waitingButton.textContent = `Waiting (${loadedWaiting.length})`;
+  waitingList.replaceChildren();
+  if (!loadedWaiting.length) {
+    const empty = document.createElement("p");
+    empty.className = "waiting-empty";
+    empty.textContent = "Nothing is waiting.";
+    waitingList.appendChild(empty);
+    return;
+  }
+
+  for (const waiting of loadedWaiting) {
+    const item = waiting.subject_type === "work_item"
+      ? document.createElement("a")
+      : document.createElement("button");
+    item.className = "waiting-item";
+    item.setAttribute("role", "listitem");
+    if (waiting.subject_type === "work_item") {
+      const url = new URL(window.location.href);
+      url.search = "";
+      url.searchParams.set("journey", waiting.journey_slug);
+      url.searchParams.set("item", waiting.subject_id);
+      item.href = url.toString();
+    } else {
+      item.type = "button";
+      item.addEventListener("click", async () => {
+        waitingDialog.close();
+        jauntsDialog.showModal();
+        await loadJaunts(waiting.subject_id);
+      });
+    }
+    const title = document.createElement("strong");
+    title.textContent = waiting.subject_title;
+    const description = document.createElement("span");
+    description.textContent = `Waiting: ${waiting.description}`;
+    const source = document.createElement("small");
+    source.textContent = waiting.subject_type === "work_item"
+      ? `Journey · ${waiting.journey_title}`
+      : "Jaunt";
+    item.append(title, description, source);
+    waitingList.appendChild(item);
+  }
+}
+
+async function loadWaiting() {
+  try {
+    loadedWaiting = await fetchJson("/api/waiting");
+    waitingMessage.textContent = "";
+    renderWaiting();
+  } catch (error) {
+    waitingMessage.textContent = error.message;
+  }
+}
+
 function resetJauntEditor() {
   selectedJaunt = null;
   jauntForm.reset();
@@ -371,7 +431,7 @@ function populateJauntEditor(jaunt) {
   const editable = jaunt.status === "open";
   jauntTitle.readOnly = !editable;
   jauntNotes.readOnly = !editable;
-  jauntSave.textContent = "Save";
+  jauntSave.textContent = "Save (Ctrl-S)";
   jauntSave.hidden = !editable;
   jauntComplete.hidden = !editable;
   jauntReopen.hidden = jaunt.status !== "completed";
@@ -465,6 +525,7 @@ async function saveJaunt(event) {
     populateJauntEditor(saved);
     jauntMessage.textContent = "Saved.";
     await loadJaunts(saved.id);
+    await loadWaiting();
   } catch (error) {
     jauntMessage.textContent = error.message;
   }
@@ -483,6 +544,7 @@ async function transitionJaunt(action) {
     );
     populateJauntEditor(changed);
     await loadJaunts(changed.id);
+    await loadWaiting();
   } catch (error) {
     jauntMessage.textContent = error.message;
   }
@@ -540,6 +602,11 @@ refreshButton.addEventListener("click", () => {
   if (sharedJourney) loadJourney(sharedJourney);
   else loadJourneys(select.value);
 });
+waitingButton.addEventListener("click", async () => {
+  waitingDialog.showModal();
+  await loadWaiting();
+});
+waitingClose.addEventListener("click", () => waitingDialog.close());
 jauntsButton.addEventListener("click", async () => {
   jauntsDialog.showModal();
   await loadJaunts();
@@ -549,11 +616,29 @@ jauntsRefresh.addEventListener("click", () => loadJaunts());
 jauntsShowCompleted.addEventListener("change", renderJauntList);
 jauntNew.addEventListener("click", resetJauntEditor);
 jauntForm.addEventListener("submit", saveJaunt);
+jauntForm.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey || event.key.toLowerCase() !== "s") return;
+
+  event.preventDefault();
+  if (!event.repeat && !jauntSave.hidden) jauntForm.requestSubmit();
+});
+jauntNotes.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab" || event.shiftKey) return;
+
+  event.preventDefault();
+  jauntNotes.setRangeText(
+    "\t",
+    jauntNotes.selectionStart,
+    jauntNotes.selectionEnd,
+    "end",
+  );
+});
 jauntComplete.addEventListener("click", () => transitionJaunt("complete"));
 jauntReopen.addEventListener("click", () => transitionJaunt("reopen"));
 
 async function initialize() {
   await loadConfiguration();
+  waitingButton.hidden = !isLocalAuthoringView;
   jauntsButton.hidden = !isLocalAuthoringView;
   if (sharedJourney) {
     select.hidden = true;
@@ -561,7 +646,11 @@ async function initialize() {
     setInterval(() => loadJourney(sharedJourney), 15000);
     loadJourney(sharedJourney);
   } else {
-    setInterval(() => loadJourneys(select.value), 15000);
+    setInterval(() => {
+      loadJourneys(select.value);
+      if (isLocalAuthoringView) loadWaiting();
+    }, 15000);
+    if (isLocalAuthoringView) loadWaiting();
     loadJourneys(requestedJourney);
   }
 }

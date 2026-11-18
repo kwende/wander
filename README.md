@@ -84,7 +84,9 @@ packaged executable. PowerShell orchestrates the paths but never opens SQLite:
 The source application must be stopped. The packaged application acquires the
 source and destination leases, verifies and snapshots the source, migrates a
 staged copy, compares semantic inventories, and atomically publishes the new
-ledger. It refuses to overwrite an existing destination.
+ledger. The imported database receives a stable ledger ID and the application
+writes `wander.identity.json` beside it. It refuses to overwrite an existing
+destination or identity.
 
 An immutable version can be staged without publishing any launch link:
 
@@ -95,10 +97,13 @@ An immutable version can be staged without publishing any launch link:
 ```
 
 A full install is data-gated. It requires the per-user ledger to exist first,
-unless `-AllowNewLedger` explicitly authorizes a new empty ledger. The installer
-verifies WebView2 and every manifest hash, copies into a versioned directory,
-then transactionally replaces the Desktop and Start Menu launch links. Pending
-pointer transactions are restored on the next installer or rollback run.
+unless `-AllowNewLedger` writes a one-use authorization for a new empty ledger.
+The application consumes that authorization only after creating the database
+and its identity receipt. It will not treat the flag as permission to replace a
+missing registered ledger. The installer verifies WebView2 and every manifest
+hash, copies into a versioned directory, then transactionally replaces the
+Desktop and Start Menu launch links. Pending pointer transactions are restored
+on the next installer or rollback run.
 
 ```powershell
 & .\scripts\install-desktop.ps1 `
@@ -117,6 +122,54 @@ Rollback never restores a database backup. Data restore is a separate emergency
 operation because it discards writes made after the selected snapshot. Until
 the ledger cutover and Codex registration batch is complete, use `-StageOnly`
 or temporary install/data roots rather than installing to the default paths.
+
+At startup Wander verifies that the database's ledger ID matches the adjacent
+identity receipt. Schema 5 also records `ever_nonempty` inside SQLite; Journey
+and Jaunt creation set it through same-transaction triggers. Startup refuses a
+missing or replacement database, and refuses a database that was previously
+non-empty but now contains neither Journeys nor Jaunts. A pre-schema-5 imported
+ledger can establish its first identity only when its recorded import inventory
+still proves the current database descends from that import.
+
+The desktop application writes verified snapshots beneath
+`%LOCALAPPDATA%\Wander\backups\snapshots`. It snapshots before opening its
+listeners, hourly while running, and after stopping its writers during a clean
+shutdown. An unchanged semantic inventory is not copied again. Each snapshot is
+created with SQLite's backup API, reopened for integrity and foreign-key checks,
+hashed, and paired with a manifest containing its ledger identity, schema, and
+semantic inventory. The newest 168 changed generations are retained by default;
+`--snapshot-interval-seconds` and `--snapshot-retention` provide explicit
+runtime overrides.
+
+Restore is an explicit stopped-application operation. It accepts either a
+manifested snapshot or the verified first-import backup, takes a pre-restore
+safety backup of the current ledger, stages and migrates the selected source,
+and publishes it only after identity, schema, integrity, and semantic inventory
+checks succeed:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Wander\versions\<version>\Wander.exe" `
+    --restore-ledger "$env:LOCALAPPDATA\Wander\backups\snapshots\<snapshot>.db" `
+    --database "$env:LOCALAPPDATA\Wander\data\wander.db" `
+    --backups-directory "$env:LOCALAPPDATA\Wander\backups" `
+    --diagnostic-output .\artifacts\desktop-restore.json
+```
+
+The restore command holds the same exclusive ledger lease as the desktop app.
+It leaves `backups\restores\restore-pending.json` only when publication reached
+the point where operator recovery is required; rerunning the same restore can
+finish that interrupted operation.
+
+Wander writes structured JSON Lines diagnostics to
+`%LOCALAPPDATA%\Wander\logs\wander.jsonl`. The file rotates at 5 MB and retains
+ten older generations. Every record carries a timestamp, severity, application
+version, process/thread identity, and per-run correlation ID. Logged events
+cover process and listener lifecycle, ledger validation, HTTP request metadata,
+MCP tool names and outcomes, snapshots, imports, restores, and unhandled
+exceptions. Tool arguments, HTTP query strings and bodies, Journey/Jaunt text,
+Mathom content, credentials, and authorization headers are intentionally not
+recorded. An explicit development database keeps logs beside it; use
+`--logs-directory` to override that location.
 
 Each journey can expose ordered HTTP links beneath its description. The
 dashboard presents top-level work as a rolling horizon: **Now** for active or
@@ -156,6 +209,20 @@ edit, complete, reopen, and inspect their history without changing the selected
 Journey. Agents have equivalent semantic MCP tools. Jaunts have independent
 versions and no Journey relationship; promotion is a separate capability and
 must never be simulated by creating a labeled Journey.
+An open Jaunt can also be saved from its title or notes field with `Ctrl-S`.
+
+A standalone marker line records an external dependency without turning it into
+another lifecycle state:
+
+```text
+[waiting: Noah to contact Cozad]
+```
+
+The local `Waiting` view combines markers from open Jaunts with blocked work
+items in active or paused Journeys. For Journey work, include the marker in the
+blocking reason. `list_waiting` exposes the same derived, read-only index to
+agents. Removing a Jaunt marker or restarting a blocked work item clears it from
+the current Waiting view; the original notes and events remain historical.
 
 The repository's `.mcp.json` points to the desktop application's localhost MCP
 endpoint. It never starts a second Wander process or opens SQLite. Open Wander

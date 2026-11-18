@@ -109,6 +109,20 @@ projection.
   distinct operation and must not be simulated when no promotion tool exists.
 - The human Jaunts modal is available only from localhost. This HTTP boundary
   does not prohibit agents from using the semantic MCP tools.
+- A standalone `[waiting: free-form description]` line marks an open Jaunt as
+  waiting without changing its lifecycle. Preserve the user's description and
+  remove the marker only when the dependency is no longer current.
+
+## Review waiting work
+
+- Use `list_waiting` for the current cross-ledger waiting index. It derives open
+  Jaunt waits from their notes and Journey waits from blocked work-item reasons.
+- To mark Journey work as waiting, block the active work item with a standalone
+  `[waiting: free-form description]` line in the reason. Restarting that work
+  item removes it from the current waiting index while retaining its history.
+- Waiting is derived state, not a new lifecycle status. Do not parse inline
+  prose, completed Jaunts, terminal work items, or completed/archived Journeys
+  as current waits.
 
 ## Journey progress into GitHub issues
 

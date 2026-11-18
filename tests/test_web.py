@@ -61,6 +61,23 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertEqual("local-authoring", result["jaunts_mode"])
         self.assertEqual("http://10.20.30.40:8765", result["share_base_url"])
 
+    def test_request_log_records_metadata_without_query_content(self) -> None:
+        with self.assertLogs("wander.web", level="INFO") as captured:
+            with urllib.request.urlopen(
+                f"{self.base_url}/api/journeys?private=do-not-log"
+            ) as response:
+                self.assertEqual(200, response.status)
+
+        record = next(
+            record
+            for record in captured.records
+            if getattr(record, "event_name", None) == "http.request.completed"
+        )
+        self.assertEqual("GET", record.event_fields["method"])
+        self.assertEqual("/api/journeys", record.event_fields["path"])
+        self.assertEqual(200, record.event_fields["status"])
+        self.assertNotIn("private", json.dumps(record.event_fields))
+
     def test_initial_page_includes_wander_tagline(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/") as response:
             page = response.read().decode("utf-8")
@@ -68,6 +85,7 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertIn("Not all who wander are lost.", page)
         self.assertIn("Loading the workboard", page)
         self.assertIn("jaunts-dialog", page)
+        self.assertIn("waiting-dialog", page)
 
     def test_dashboard_presents_work_as_a_rolling_frontier(self) -> None:
         with urllib.request.urlopen(f"{self.base_url}/") as response:
@@ -84,6 +102,22 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         self.assertNotIn("progress-track", page)
         self.assertIn("known next", script)
         self.assertIn("scout the terrain", script)
+
+    def test_jaunt_notes_accept_tab_indentation(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/app.js") as response:
+            script = response.read().decode("utf-8")
+
+        self.assertIn('jauntNotes.addEventListener("keydown"', script)
+        self.assertIn('event.key !== "Tab" || event.shiftKey', script)
+        self.assertIn('jauntNotes.setRangeText(\n    "\\t"', script)
+
+    def test_open_jaunt_supports_ctrl_s_save(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/app.js") as response:
+            script = response.read().decode("utf-8")
+
+        self.assertIn('jauntSave.textContent = "Save (Ctrl-S)"', script)
+        self.assertIn('jauntForm.addEventListener("keydown"', script)
+        self.assertIn("jauntForm.requestSubmit()", script)
 
     def test_http_mutation_is_rejected(self) -> None:
         request = urllib.request.Request(
@@ -137,10 +171,31 @@ class ReadOnlyDashboardTests(unittest.TestCase):
         listed = self.request_json("/api/jaunts")
         self.assertEqual([created["id"]], [jaunt["id"] for jaunt in listed])
 
+    def test_local_waiting_api_derives_open_jaunt_markers(self) -> None:
+        created = self.request_json(
+            "/api/jaunts",
+            "POST",
+            {
+                "title": "Investigate Cozad touchscreen",
+                "notes": "[waiting: Noah to contact Cozad]",
+            },
+        )
+
+        waiting = self.request_json("/api/waiting")
+
+        self.assertEqual(1, len(waiting))
+        self.assertEqual(created["id"], waiting[0]["subject_id"])
+        self.assertEqual("Noah to contact Cozad", waiting[0]["description"])
+
     def test_non_loopback_request_cannot_read_jaunts(self) -> None:
         with patch("wander.web.is_loopback_address", return_value=False):
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 urllib.request.urlopen(f"{self.base_url}/api/jaunts")
+        self.assertEqual(403, raised.exception.code)
+
+        with patch("wander.web.is_loopback_address", return_value=False):
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(f"{self.base_url}/api/waiting")
         self.assertEqual(403, raised.exception.code)
 
     def request_json(

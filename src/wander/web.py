@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import socket
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from wander.logging_config import event_fields
 from wander.store import ConflictError, NotFoundError, ValidationError, WanderStore
 
 
@@ -19,6 +22,7 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 MAX_JSON_BODY_BYTES = 1_000_000
+logger = logging.getLogger("wander.web")
 
 
 def is_loopback_address(value: str) -> bool:
@@ -33,8 +37,70 @@ class DashboardHandler(BaseHTTPRequestHandler):
     store: WanderStore
     share_base_url: str
 
+    def handle_one_request(self) -> None:
+        started = time.monotonic()
+        self._response_status: int | None = None
+        try:
+            super().handle_one_request()
+        except Exception as error:
+            logger.exception(
+                "HTTP request failed",
+                extra=event_fields(
+                    "http.request.failed",
+                    method=getattr(self, "command", None),
+                    path=self._log_path(),
+                    client_address=self.client_address[0],
+                    error_type=type(error).__name__,
+                    duration_ms=round((time.monotonic() - started) * 1000, 3),
+                ),
+            )
+            raise
+        if getattr(self, "command", None):
+            logger.info(
+                "HTTP request completed",
+                extra=event_fields(
+                    "http.request.completed",
+                    method=self.command,
+                    path=self._log_path(),
+                    status=self._response_status,
+                    client_address=self.client_address[0],
+                    duration_ms=round((time.monotonic() - started) * 1000, 3),
+                ),
+            )
+
+    def _log_path(self) -> str | None:
+        request_path = getattr(self, "path", None)
+        if not request_path:
+            return None
+        path = unquote(urlparse(request_path).path)
+        if path in {
+            "/",
+            "/app.js",
+            "/styles.css",
+            "/api/health",
+            "/api/jaunts",
+            "/api/journeys",
+            "/api/projects",
+        }:
+            return path
+        if path.startswith("/api/jaunts/"):
+            return (
+                "/api/jaunts/{jaunt_id}/{action}"
+                if path.count("/") > 3
+                else "/api/jaunts/{jaunt_id}"
+            )
+        if path.startswith("/api/journeys/"):
+            return "/api/journeys/{journey}"
+        if path.startswith("/api/projects/"):
+            return "/api/projects/{journey}"
+        return "<unmatched>"
+
     def log_message(self, format: str, *args: object) -> None:
-        print(f"{self.address_string()} - {format % args}")
+        return
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._response_status = code
+        super().send_response(code, message)
 
     def _send_bytes(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -200,6 +266,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise ValidationError("status may be specified only once")
                 status = status_values[0] if status_values else None
                 self._send_json(HTTPStatus.OK, self.store.list_jaunts(status))
+                return
+            if path == "/api/waiting":
+                self._require_local_jaunts()
+                self._send_json(HTTPStatus.OK, self.store.list_waiting())
                 return
             if path.startswith("/api/jaunts/"):
                 self._require_local_jaunts()

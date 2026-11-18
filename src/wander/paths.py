@@ -40,3 +40,11 @@ def backup_directory_for_database(database_path: str | Path) -> Path:
     if database.resolve() == application_paths.database.resolve():
         return application_paths.backups
     return database.parent / "backups"
+
+
+def log_directory_for_database(database_path: str | Path) -> Path:
+    database = Path(database_path)
+    application_paths = default_paths()
+    if database.resolve() == application_paths.database.resolve():
+        return application_paths.logs
+    return database.parent / "logs"
